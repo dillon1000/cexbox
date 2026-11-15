@@ -55,8 +55,6 @@ namespace Cexbox
             _canvas.CreateResources += OnCreateResources;
             _canvas.Draw += OnDraw;
             SizeChanged += (s, e) => UpdateGrid();
-            KeyDown += OnKeyDown;
-            CharacterReceived += OnCharacterReceived;
             PointerPressed += (s, e) => Focus(FocusState.Pointer);
             PointerWheelChanged += (s, e) =>
             {
@@ -235,13 +233,15 @@ namespace Cexbox
 
         string Arrow(char final) => (Terminal.AppCursorKeys ? "\x1bO" : "\x1b[") + final;
 
-        void OnKeyDown(object sender, KeyRoutedEventArgs e)
+        // Turns a key or controller button into terminal input. Called by the page for
+        // every key while the program runs, so it works whatever has focus. Returns
+        // true if the key was used.
+        public bool HandleKey(VirtualKey key)
         {
-            AppLog.Write($"terminal KeyDown {e.Key} (original {e.OriginalKey})");
             bool ctrl = IsDown(VirtualKey.Control);
             bool shift = IsDown(VirtualKey.Shift);
             string s = null;
-            switch (e.Key)
+            switch (key)
             {
                 case VirtualKey.Enter:
                 case VirtualKey.GamepadA: s = "\r"; break;
@@ -266,17 +266,17 @@ namespace Cexbox
                 case VirtualKey.Insert: s = "\x1b[2~"; break;
                 case VirtualKey.Delete: s = "\x1b[3~"; break;
                 case VirtualKey.PageUp:
-                    if (shift) { Scroll(Terminal.Rows / 2); e.Handled = true; return; }
+                    if (shift) { Scroll(Terminal.Rows / 2); return true; }
                     s = "\x1b[5~";
                     break;
                 case VirtualKey.PageDown:
-                    if (shift) { Scroll(-Terminal.Rows / 2); e.Handled = true; return; }
+                    if (shift) { Scroll(-Terminal.Rows / 2); return true; }
                     s = "\x1b[6~";
                     break;
-                case VirtualKey.GamepadLeftShoulder: Scroll(Terminal.Rows / 2); e.Handled = true; return;
-                case VirtualKey.GamepadRightShoulder: Scroll(-Terminal.Rows / 2); e.Handled = true; return;
-                case VirtualKey.GamepadY: KeyboardRequested?.Invoke(); e.Handled = true; return;
-                case VirtualKey.GamepadView: LinkRequested?.Invoke(); e.Handled = true; return;
+                case VirtualKey.GamepadLeftShoulder: Scroll(Terminal.Rows / 2); return true;
+                case VirtualKey.GamepadRightShoulder: Scroll(-Terminal.Rows / 2); return true;
+                case VirtualKey.GamepadY: KeyboardRequested?.Invoke(); return true;
+                case VirtualKey.GamepadView: LinkRequested?.Invoke(); return true;
                 case VirtualKey.GamepadMenu: s = "\x03"; break;
                 case VirtualKey.F1: s = "\x1bOP"; break;
                 case VirtualKey.F2: s = "\x1bOQ"; break;
@@ -291,33 +291,31 @@ namespace Cexbox
                 case VirtualKey.F11: s = "\x1b[23~"; break;
                 case VirtualKey.F12: s = "\x1b[24~"; break;
                 default:
-                    if (ctrl && e.Key >= VirtualKey.A && e.Key <= VirtualKey.Z) s = ((char)(e.Key - VirtualKey.A + 1)).ToString();
-                    else if (ctrl && e.Key == VirtualKey.Space) s = "\0";
+                    if (ctrl && key >= VirtualKey.A && key <= VirtualKey.Z) s = ((char)(key - VirtualKey.A + 1)).ToString();
+                    else if (ctrl && key == VirtualKey.Space) s = "\0";
                     break;
             }
-            if (s != null)
-            {
-                Send(s);
-                e.Handled = true;
-            }
+            if (s == null) return false;
+            Send(s);
+            return true;
         }
 
-        void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs e)
+        // Turns a typed character into terminal input. Control characters come through
+        // HandleKey instead. Returns true if the character was used.
+        public bool HandleCharacter(char c, bool alt)
         {
-            char c = e.Character;
-            // Control characters are sent from KeyDown, so skip them here.
-            if (c < 0x20 || c == 0x7f) return;
-            e.Handled = true;
+            if (c < 0x20 || c == 0x7f) return false;
             if (char.IsHighSurrogate(c))
             {
                 _pendingHigh = c;
-                return;
+                return true;
             }
             string s = c.ToString();
             if (char.IsLowSurrogate(c) && _pendingHigh != 0) s = new string(new[] { _pendingHigh, c });
             _pendingHigh = (char)0;
-            if (e.KeyStatus.IsMenuKeyDown) s = "\x1b" + s;
+            if (alt) s = "\x1b" + s;
             Send(s);
+            return true;
         }
     }
 }

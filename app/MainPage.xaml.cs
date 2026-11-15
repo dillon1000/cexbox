@@ -36,12 +36,33 @@ namespace Cexbox
             AppLog.Reset();
             Loaded += OnLoaded;
 
-            // Every key the window sees, and which control had focus at the time.
-            Window.Current.CoreWindow.KeyDown += (s, e) =>
+            // While Claude Code runs, keys and controller buttons go to the terminal no matter
+            // what has focus, except while typing in a text box or with the QR code showing.
+            // AcceleratorKeyActivated runs before XAML sees the key, so a handled D-pad press
+            // never also moves focus between buttons.
+            CoreWindow window = Window.Current.CoreWindow;
+            window.Dispatcher.AcceleratorKeyActivated += (s, e) =>
             {
+                if (e.EventType != CoreAcceleratorKeyEventType.KeyDown && e.EventType != CoreAcceleratorKeyEventType.SystemKeyDown) return;
                 object focused = FocusManager.GetFocusedElement();
                 AppLog.Write($"window KeyDown {e.VirtualKey}, focus on {focused?.GetType().Name ?? "nothing"}" +
                              (focused is FrameworkElement fe && !string.IsNullOrEmpty(fe.Name) ? $" ({fe.Name})" : ""));
+                if (focused is TextBox && (e.VirtualKey == VirtualKey.Escape || e.VirtualKey == VirtualKey.GamepadB))
+                {
+                    // Leave the text box and go back to the terminal.
+                    Terminal.Focus(FocusState.Programmatic);
+                    e.Handled = true;
+                    return;
+                }
+                if (KeysGoToTerminal(focused) && Terminal.HandleKey(e.VirtualKey)) e.Handled = true;
+            };
+            window.CharacterReceived += (s, e) =>
+            {
+                if (KeysGoToTerminal(FocusManager.GetFocusedElement()) &&
+                    Terminal.HandleCharacter((char)e.KeyCode, e.KeyStatus.IsMenuKeyDown))
+                {
+                    e.Handled = true;
+                }
             };
 
             Terminal.Input += s => SendToProgram(s);
@@ -87,6 +108,9 @@ namespace Cexbox
                 var _ = Dispatcher.RunAsync(CoreDispatcherPriority.Low, () => Run_Click(this, null));
             }
         }
+
+        bool KeysGoToTerminal(object focused) =>
+            _running && LinkOverlay.Visibility == Visibility.Collapsed && !(focused is TextBox);
 
         void RefreshStatus()
         {
