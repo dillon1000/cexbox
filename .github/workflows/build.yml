@@ -63,6 +63,16 @@ jobs:
             $g.Dispose(); $bmp.Dispose()
           }
 
+      - name: Stamp the version with the run number
+        shell: pwsh
+        run: |
+          # Each build installs over the last one, which keeps the app's data (and claude.exe).
+          $path = "app/Package.appxmanifest"
+          $xml = Get-Content $path -Raw
+          $xml = $xml -replace 'Version="0\.1\.0\.0"', "Version=`"0.1.$env:GITHUB_RUN_NUMBER.0`""
+          Set-Content -Path $path -Value $xml -NoNewline
+          Select-String -Path $path -Pattern 'Identity'
+
       - name: Create a test signing certificate
         shell: pwsh
         run: |
