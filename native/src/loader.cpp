@@ -246,6 +246,10 @@ void* find_export(const Image& img, const char* name, uint16_t ordinal) {
 }
 
 void* resolve_import(const char* dll, const char* name, uint16_t ordinal) {
+    // wsock32 functions come by ordinal; resolve them by name so replacements apply.
+    if (!name && lower(dll) == "wsock32.dll") {
+        if (const char* n = wsock32_name(ordinal)) return resolve_import("ws2_32.dll", n, 0);
+    }
     if (name) {
         if (void* o = lookup_override(name)) {
             ++g_stats.overridden;

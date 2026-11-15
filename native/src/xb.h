@@ -71,6 +71,10 @@ void console_push_text(const char* utf8, size_t n);
 void console_resize(SHORT cols, SHORT rows);
 void* console_override(const char* name);
 
+// net.cpp
+void* net_override(const char* name);
+const char* wsock32_name(uint16_t ordinal);
+
 // tls.cpp
 bool tls_init(Image& img, std::string& err);
 // For threads that belong to the program: installs its TLS until the thread ends.

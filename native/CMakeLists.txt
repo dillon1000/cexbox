@@ -8,6 +8,7 @@ add_library(xbloader SHARED
     src/console.cpp
     src/host.cpp
     src/loader.cpp
+    src/net.cpp
     src/shims.cpp
     src/stubs.cpp
     src/tls.cpp
@@ -29,4 +30,4 @@ set_property(TARGET xbloader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
 # Only the functions Xbox apps may import. A call to anything else fails to link.
 target_link_options(xbloader PRIVATE /NODEFAULTLIB:kernel32.lib /NODEFAULTLIB:user32.lib /NODEFAULTLIB:advapi32.lib /NODEFAULTLIB:ole32.lib)
-target_link_libraries(xbloader PRIVATE WindowsApp.lib)
+target_link_libraries(xbloader PRIVATE WindowsApp.lib ws2_32.lib)

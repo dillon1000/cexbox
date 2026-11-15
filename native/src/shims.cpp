@@ -464,6 +464,7 @@ void shims_init() {
 
 void* lookup_override(const char* name) {
     if (void* c = console_override(name)) return c;
+    if (void* n = net_override(name)) return n;
     for (const Override& o : kOverrides) {
         if (strcmp(o.name, name) == 0) return o.fn;
     }
