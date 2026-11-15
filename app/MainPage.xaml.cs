@@ -41,6 +41,9 @@ namespace Cexbox
             // AcceleratorKeyActivated runs before XAML sees the key, so a handled D-pad press
             // never also moves focus between buttons.
             CoreWindow window = Window.Current.CoreWindow;
+            window.Activated += (s, e) => AppLog.Write($"window activation: {e.WindowActivationState}");
+            window.VisibilityChanged += (s, e) => AppLog.Write($"window visible: {e.Visible}");
+            window.PointerPressed += (s, e) => AppLog.Write("window pointer pressed");
             window.Dispatcher.AcceleratorKeyActivated += (s, e) =>
             {
                 if (e.EventType != CoreAcceleratorKeyEventType.KeyDown && e.EventType != CoreAcceleratorKeyEventType.SystemKeyDown) return;
@@ -270,6 +273,12 @@ namespace Cexbox
         void Pump()
         {
             if (++_pumps % 30 == 0) CheckRemoteInput();
+            if (_pumps % 300 == 0)
+            {
+                CoreWindow w = Window.Current.CoreWindow;
+                AppLog.Write($"window state: activation {w.ActivationMode}, visible {w.Visible}, " +
+                             $"focus on {FocusManager.GetFocusedElement()?.GetType().Name ?? "nothing"}");
+            }
             if (_running)
             {
                 int n;
