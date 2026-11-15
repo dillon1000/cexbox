@@ -20,7 +20,7 @@ namespace Cexbox
     sealed class TerminalView : UserControl
     {
         const int MaxRun = 16;  // most characters drawn in one call
-        const float FontSize = 12f;
+        const float FontSize = 10.5f;
         // Bundled with the app: the Xbox has no monospace font of its own.
         const string FontFamily = "ms-appx:///Fonts/CascadiaMono.ttf#Cascadia Mono";
 
@@ -166,8 +166,15 @@ namespace Cexbox
                 _cellH = (float)Math.Ceiling(layout.LayoutBounds.Height);
             }
             _measured = true;
+            if (!_probed)
+            {
+                _probed = true;
+                ProbeStrokes(sender);
+            }
             UpdateGrid();
         }
+
+        bool _probed;
 
         void UpdateGrid()
         {
@@ -270,6 +277,32 @@ namespace Cexbox
         // Checks one drawing call when in step-by-step mode.
         bool Check(CanvasDrawingSession ds, string what) => !_careful || Flush(ds, what);
 
+        // Underlines are thin filled rectangles. Only fills and text are used anywhere:
+        // stroked shapes (DrawLine, DrawRectangle) are what failed on Xbox.
+        void Underline(CanvasDrawingSession ds, float x, float top, float width, Color color)
+        {
+            ds.FillRectangle(x, top + _cellH - 2, width, 1, color);
+        }
+
+        // Logs once whether the Xbox can draw a stroked line, to confirm the cause above.
+        void ProbeStrokes(CanvasControl sender)
+        {
+            try
+            {
+                using (var probe = new CanvasRenderTarget(sender, 16, 16))
+                using (CanvasDrawingSession ds = probe.CreateDrawingSession())
+                {
+                    ds.DrawLine(1, 1, 14, 14, Foreground);
+                    ds.Flush();
+                }
+                AppLog.Write("stroke probe: drawing a line works");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write($"stroke probe: drawing a line fails (0x{ex.HResult:X8}): {ex.Message}");
+            }
+        }
+
         void DrawRun(CanvasDrawingSession ds, string s, float x, float y, Color color, CanvasTextFormat format)
         {
             ds.DrawText(s, x, y, color, format);
@@ -355,7 +388,7 @@ namespace Cexbox
                         DrawRun(ds, text.ToString(), x * _cellW, top, fg, bold ? _bold : _regular);
                         if ((c.Attr & CellAttr.Underline) != 0)
                         {
-                            ds.DrawLine(x * _cellW, top + _cellH - 1, end * _cellW, top + _cellH - 1, fg);
+                            Underline(ds, x * _cellW, top, (end - x) * _cellW, fg);
                             Check(ds, $"an underline on row {y}");
                         }
                         x = end;
@@ -367,7 +400,7 @@ namespace Cexbox
                         Check(ds, $"character U+{shown:X4}");
                         if ((c.Attr & CellAttr.Underline) != 0)
                         {
-                            ds.DrawLine(x * _cellW, top + _cellH - 1, (x + 1) * _cellW, top + _cellH - 1, fg);
+                            Underline(ds, x * _cellW, top, _cellW, fg);
                             Check(ds, $"an underline on row {y}");
                         }
                         x++;
@@ -378,8 +411,8 @@ namespace Cexbox
             if (t.CursorVisible && ScrollOffset == 0)
             {
                 float cx = t.CursorX * _cellW, cy = t.CursorY * _cellH;
-                if (FocusState != FocusState.Unfocused) ds.FillRectangle(cx, cy, _cellW, _cellH, Color.FromArgb(160, CursorColor.R, CursorColor.G, CursorColor.B));
-                else ds.DrawRectangle(cx, cy, _cellW, _cellH, CursorColor);
+                byte alpha = FocusState != FocusState.Unfocused ? (byte)160 : (byte)80;
+                ds.FillRectangle(cx, cy, _cellW, _cellH, Color.FromArgb(alpha, CursorColor.R, CursorColor.G, CursorColor.B));
                 Check(ds, "the cursor");
             }
         }

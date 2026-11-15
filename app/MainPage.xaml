@@ -5,7 +5,7 @@
     xmlns:local="using:Cexbox"
     Background="#141816">
 
-    <Grid Padding="48,27,48,27" RowSpacing="10">
+    <Grid Padding="36,20,36,20" RowSpacing="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -18,7 +18,7 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="#C8D0CB" />
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Foreground="#C8D0CB" />
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
                 <Button x:Name="DownloadButton" Content="Download Claude Code" Click="Download_Click" />
                 <TextBox x:Name="ArgsBox" Width="260" PlaceholderText="Arguments (optional)" />
