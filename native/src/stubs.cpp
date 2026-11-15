@@ -96,6 +96,30 @@ void* make_stub(const char* dll, const char* name, uint16_t ordinal) {
     return t;
 }
 
+void* make_bound_thunk(void* target, void* trampoline) {
+    // Each one gets its own allocation, so making it executable never touches code
+    // another thread might be running. These are rare (one per handler registered).
+    auto* t = static_cast<uint8_t*>(VirtualAllocFromApp(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    if (!t) return nullptr;
+    auto tgt = reinterpret_cast<uint64_t>(target);
+    auto tramp = reinterpret_cast<uint64_t>(trampoline);
+    uint8_t code[22] = {
+        0x48, 0xBA, 0, 0, 0, 0, 0, 0, 0, 0,  // mov rdx, target
+        0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0,  // mov rax, trampoline
+        0xFF, 0xE0,                          // jmp rax
+    };
+    memcpy(code + 2, &tgt, 8);
+    memcpy(code + 12, &tramp, 8);
+    memcpy(t, code, sizeof code);
+    ULONG old = 0;
+    if (!VirtualProtectFromApp(t, 4096, PAGE_EXECUTE_READ, &old)) {
+        log("could not make a handler thunk executable: error %lu", GetLastError());
+        return nullptr;
+    }
+    FlushInstructionCache(GetCurrentProcess(), t, 4096);
+    return t;
+}
+
 bool stubs_finalize() {
     bool ok = true;
     for (uint8_t* pool : g_pending) {

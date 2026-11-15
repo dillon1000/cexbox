@@ -168,6 +168,8 @@ std::wstring widen(const char* s, UINT code_page) {
     return out;
 }
 
+bool program_running() { return g_state == XB_RUNNING; }
+
 const std::wstring& command_line_w() { return g_command_w; }
 const std::string& command_line_a() { return g_command_a; }
 

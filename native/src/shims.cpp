@@ -250,6 +250,49 @@ BOOL WINAPI s_RegisterWaitForSingleObject(PHANDLE out, HANDLE h, WAITORTIMERCALL
     return TRUE;
 }
 
+// ---- Exception handlers ------------------------------------------------------
+// Windows runs these on whichever thread hits an exception, including the app's
+// own threads, which have no TLS for claude.exe. After the program exits its
+// threads are frozen, possibly holding locks, so its handlers must not run at all.
+
+LONG CALLBACK veh_trampoline(EXCEPTION_POINTERS* ep, PVECTORED_EXCEPTION_HANDLER handler) {
+    if (!program_running()) return EXCEPTION_CONTINUE_SEARCH;
+    tls_ensure_thread();
+    return handler(ep);
+}
+
+PVOID WINAPI s_AddVectoredExceptionHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler) {
+    void* thunk = make_bound_thunk(reinterpret_cast<void*>(handler), reinterpret_cast<void*>(&veh_trampoline));
+    if (!thunk) {
+        log("AddVectoredExceptionHandler: registering claude.exe's handler unwrapped");
+        return AddVectoredExceptionHandler(first, handler);
+    }
+    return AddVectoredExceptionHandler(first, reinterpret_cast<PVECTORED_EXCEPTION_HANDLER>(thunk));
+}
+
+LPTOP_LEVEL_EXCEPTION_FILTER volatile g_guest_filter = nullptr;
+LPTOP_LEVEL_EXCEPTION_FILTER g_host_filter = nullptr;
+volatile LONG g_filter_installed = 0;
+
+LONG WINAPI filter_trampoline(EXCEPTION_POINTERS* ep) {
+    LPTOP_LEVEL_EXCEPTION_FILTER guest = g_guest_filter;
+    if (guest && program_running()) {
+        tls_ensure_thread();
+        LONG r = guest(ep);
+        if (r != EXCEPTION_CONTINUE_SEARCH) return r;
+    }
+    return g_host_filter ? g_host_filter(ep) : EXCEPTION_CONTINUE_SEARCH;
+}
+
+LPTOP_LEVEL_EXCEPTION_FILTER WINAPI s_SetUnhandledExceptionFilter(LPTOP_LEVEL_EXCEPTION_FILTER filter) {
+    LPTOP_LEVEL_EXCEPTION_FILTER previous = g_guest_filter;
+    g_guest_filter = filter;
+    if (InterlockedExchange(&g_filter_installed, 1) == 0) {
+        g_host_filter = SetUnhandledExceptionFilter(filter_trampoline);
+    }
+    return previous;
+}
+
 // ---- Memory ----------------------------------------------------------------
 // Xbox apps may only create executable memory through the *FromApp functions,
 // and only by allocating it writable first and then changing its protection.
@@ -354,6 +397,8 @@ const Override kOverrides[] = {
     OVERRIDE(CreateThread),
     OVERRIDE(QueueUserWorkItem),
     OVERRIDE(RegisterWaitForSingleObject),
+    OVERRIDE(AddVectoredExceptionHandler),
+    OVERRIDE(SetUnhandledExceptionFilter),
     OVERRIDE(VirtualAlloc),
     OVERRIDE(VirtualProtect),
     OVERRIDE(SHGetKnownFolderPath),

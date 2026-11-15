@@ -4,10 +4,13 @@
 // Declare the whole Win32 API, desktop parts included. The DLL links only against
 // WindowsApp.lib, so calling anything an Xbox app can't import fails at link time
 // instead of failing to load on the console.
+// (Only MSVC needs this; mingw's headers already declare everything.)
+#ifdef _MSC_VER
 #ifdef WINAPI_FAMILY
 #undef WINAPI_FAMILY
 #endif
 #define WINAPI_FAMILY 100 /* WINAPI_FAMILY_DESKTOP_APP */
+#endif
 
 #include <windows.h>
 #include <objbase.h>
@@ -30,6 +33,7 @@ extern Image g_image;
 
 // host.cpp
 void log(const char* fmt, ...);
+bool program_running();
 [[noreturn]] void process_exit(UINT code);
 void register_guest_thread(HANDLE thread);
 const std::wstring& command_line_w();
@@ -53,6 +57,9 @@ extern LoadLibraryExW_fn real_LoadLibraryExW;
 // stubs.cpp
 void* make_stub(const char* dll, const char* name, uint16_t ordinal);
 bool stubs_finalize();
+// Returns code that calls trampoline(first argument, target). Used to give a
+// callback that takes one argument a second, hidden one.
+void* make_bound_thunk(void* target, void* trampoline);
 
 // tls.cpp
 bool tls_init(Image& img, std::string& err);
