@@ -19,6 +19,7 @@ namespace Cexbox
     // the bytes a terminal would send.
     sealed class TerminalView : UserControl
     {
+        const int MaxRun = 16;  // most characters drawn in one call
         const float FontSize = 12f;
         // Bundled with the app: the Xbox has no monospace font of its own.
         const string FontFamily = "ms-appx:///Fonts/CascadiaMono.ttf#Cascadia Mono";
@@ -201,21 +202,84 @@ namespace Cexbox
                 if (_frameStale)
                 {
                     _frameStale = false;
-                    using (CanvasDrawingSession ds = _frame.CreateDrawingSession())
-                    {
-                        ds.Clear(Background);
-                        Paint(ds);
-                    }
+                    PaintFrame();
                 }
-                args.DrawingSession.DrawImage(_frame);
             }
             catch (Exception ex)
             {
-                _frame = null;
                 if (++_frameErrors <= 10)
                 {
                     AppLog.Write($"drawing a frame failed (0x{ex.HResult:X8}): {ex.Message}; characters on screen: {SpecialCharacters()}");
                 }
+            }
+
+            // Show whatever was painted, even if part of the frame failed.
+            try
+            {
+                if (_frame != null) args.DrawingSession.DrawImage(_frame);
+            }
+            catch (Exception ex)
+            {
+                _frame = null;
+                if (++_frameErrors <= 10) AppLog.Write($"copying the frame to the screen failed (0x{ex.HResult:X8}): {ex.Message}");
+            }
+        }
+
+        // After a frame fails, every drawing call is flushed on its own, so the log
+        // names the call that fails and everything else still gets drawn.
+        bool _careful;
+        int _callErrors;
+
+        void PaintFrame()
+        {
+            bool ok;
+            using (CanvasDrawingSession ds = _frame.CreateDrawingSession())
+            {
+                ds.Clear(Background);
+                Paint(ds);
+                ok = Flush(ds, "the end of the frame");
+            }
+            if (ok || _careful) return;
+
+            _frameErrors++;
+            _careful = true;
+            AppLog.Write("a frame failed to draw; drawing step by step from now on");
+            using (CanvasDrawingSession ds = _frame.CreateDrawingSession())
+            {
+                ds.Clear(Background);
+                Paint(ds);
+                Flush(ds, "the end of the step-by-step frame");
+            }
+        }
+
+        // Runs the drawing calls made so far. Returns false, and logs where, if one failed.
+        bool Flush(CanvasDrawingSession ds, string where)
+        {
+            try
+            {
+                ds.Flush();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (++_callErrors <= 60) AppLog.Write($"drawing failed (0x{ex.HResult:X8}) at {where}");
+                return false;
+            }
+        }
+
+        // Checks one drawing call when in step-by-step mode.
+        bool Check(CanvasDrawingSession ds, string what) => !_careful || Flush(ds, what);
+
+        void DrawRun(CanvasDrawingSession ds, string s, float x, float y, Color color, CanvasTextFormat format)
+        {
+            ds.DrawText(s, x, y, color, format);
+            if (Check(ds, $"text \"{s}\"") || s.Length < 2) return;
+
+            // The run failed as a whole: draw it one character at a time instead.
+            for (int i = 0; i < s.Length; i++)
+            {
+                ds.DrawText(s[i].ToString(), x + i * _cellW, y, color, format);
+                Check(ds, $"character '{s[i]}'");
             }
         }
 
@@ -255,7 +319,11 @@ namespace Cexbox
                     Color bg = BackColor(row[x]);
                     int end = x + 1;
                     while (end < cols && BackColor(row[end]) == bg) end++;
-                    if (bg != Background) ds.FillRectangle(x * _cellW, top, (end - x) * _cellW, _cellH, bg);
+                    if (bg != Background)
+                    {
+                        ds.FillRectangle(x * _cellW, top, (end - x) * _cellW, _cellH, bg);
+                        Check(ds, $"a background on row {y}");
+                    }
                     x = end;
                 }
 
@@ -276,20 +344,32 @@ namespace Cexbox
                     {
                         text.Clear();
                         int end = x;
-                        while (end < cols && row[end].Ch > 32 && row[end].Ch < 127 &&
+                        // Runs are kept short: long unbroken text (a link, a file path) has
+                        // made drawing fail on Xbox.
+                        while (end < cols && end - x < MaxRun && row[end].Ch > 32 && row[end].Ch < 127 &&
                                ForeColor(row[end]) == fg && ((row[end].Attr & CellAttr.Bold) != 0) == bold)
                         {
                             text.Append((char)row[end].Ch);
                             end++;
                         }
-                        ds.DrawText(text.ToString(), x * _cellW, top, fg, bold ? _bold : _regular);
-                        if ((c.Attr & CellAttr.Underline) != 0) ds.DrawLine(x * _cellW, top + _cellH - 1, end * _cellW, top + _cellH - 1, fg);
+                        DrawRun(ds, text.ToString(), x * _cellW, top, fg, bold ? _bold : _regular);
+                        if ((c.Attr & CellAttr.Underline) != 0)
+                        {
+                            ds.DrawLine(x * _cellW, top + _cellH - 1, end * _cellW, top + _cellH - 1, fg);
+                            Check(ds, $"an underline on row {y}");
+                        }
                         x = end;
                     }
                     else
                     {
-                        ds.DrawText(char.ConvertFromUtf32(FontCoverage.Resolve(c.Ch)), x * _cellW, top, fg, bold ? _bold : _regular);
-                        if ((c.Attr & CellAttr.Underline) != 0) ds.DrawLine(x * _cellW, top + _cellH - 1, (x + 1) * _cellW, top + _cellH - 1, fg);
+                        int shown = FontCoverage.Resolve(c.Ch);
+                        ds.DrawText(char.ConvertFromUtf32(shown), x * _cellW, top, fg, bold ? _bold : _regular);
+                        Check(ds, $"character U+{shown:X4}");
+                        if ((c.Attr & CellAttr.Underline) != 0)
+                        {
+                            ds.DrawLine(x * _cellW, top + _cellH - 1, (x + 1) * _cellW, top + _cellH - 1, fg);
+                            Check(ds, $"an underline on row {y}");
+                        }
                         x++;
                     }
                 }
@@ -300,6 +380,7 @@ namespace Cexbox
                 float cx = t.CursorX * _cellW, cy = t.CursorY * _cellH;
                 if (FocusState != FocusState.Unfocused) ds.FillRectangle(cx, cy, _cellW, _cellH, Color.FromArgb(160, CursorColor.R, CursorColor.G, CursorColor.B));
                 else ds.DrawRectangle(cx, cy, _cellW, _cellH, CursorColor);
+                Check(ds, "the cursor");
             }
         }
 
