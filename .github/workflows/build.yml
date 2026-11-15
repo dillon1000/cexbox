@@ -27,7 +27,7 @@ jobs:
       - name: Build the native loader
         shell: pwsh
         run: |
-          cmake -S native -B native/build -A x64 -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0
+          cmake -S native -B native/build -A x64 "-DCMAKE_SYSTEM_NAME=WindowsStore" "-DCMAKE_SYSTEM_VERSION=10.0"
           if ($LASTEXITCODE -ne 0) { exit 1 }
           cmake --build native/build --config Release
           if ($LASTEXITCODE -ne 0) { exit 1 }
