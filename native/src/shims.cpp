@@ -137,8 +137,20 @@ BOOL WINAPI s_FreeLibrary(HMODULE h) {
     return FreeLibrary(h);
 }
 
+// Every program thread ends through here, so Windows gets its TLS entry back first.
+void end_program_thread() {
+    tls_run_callbacks(DLL_THREAD_DETACH);
+    tls_thread_exit();
+}
+
+VOID WINAPI s_ExitThread(DWORD code) {
+    end_program_thread();
+    ExitThread(code);
+}
+
 VOID WINAPI s_FreeLibraryAndExitThread(HMODULE h, DWORD code) {
     if (h != reinterpret_cast<HMODULE>(g_image.base)) FreeLibrary(h);
+    end_program_thread();
     ExitThread(code);
 }
 
@@ -178,7 +190,9 @@ DWORD WINAPI thread_trampoline(void* p) {
     HeapFree(GetProcessHeap(), 0, p);
     tls_ensure_thread();
     tls_run_callbacks(DLL_THREAD_ATTACH);
-    return s.fn(s.arg);
+    DWORD r = s.fn(s.arg);
+    end_program_thread();
+    return r;
 }
 
 HANDLE WINAPI s_CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE fn, LPVOID arg,
@@ -413,6 +427,7 @@ const Override kOverrides[] = {
     OVERRIDE(LoadLibraryExA),
     OVERRIDE(FreeLibrary),
     OVERRIDE(FreeLibraryAndExitThread),
+    OVERRIDE(ExitThread),
     OVERRIDE(RtlPcToFileHeader),
     OVERRIDE(GetCommandLineW),
     OVERRIDE(GetCommandLineA),

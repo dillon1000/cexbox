@@ -73,8 +73,11 @@ void* console_override(const char* name);
 
 // tls.cpp
 bool tls_init(Image& img, std::string& err);
-// For threads that belong to the program: installs its TLS for good.
+// For threads that belong to the program: installs its TLS until the thread ends.
 void tls_ensure_thread();
+// Runs the program's thread-detach callbacks and gives slot 0 back to Windows.
+// Must be called before a program thread exits.
+void tls_thread_exit();
 // For threads the program borrows: installs its TLS until tls_leave.
 void* tls_enter();
 void tls_leave(void* previous);

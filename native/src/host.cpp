@@ -243,6 +243,8 @@ void register_guest_thread(HANDLE thread) {
             if (w) CloseHandle(w);
         }
     }
+    // Give Windows its TLS entry back before the thread's normal cleanup runs.
+    tls_thread_exit();
     ExitThread(code);
 }
 
