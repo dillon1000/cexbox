@@ -77,9 +77,76 @@ BOOL PASCAL n_ConnectEx(SOCKET s, const sockaddr* name, int len, PVOID buf, DWOR
     return r;
 }
 
+// Each traced function logs at most this many calls.
+bool should_log(volatile LONG& counter) { return InterlockedIncrement(&counter) <= 40; }
+
+int WSAAPI n_recv(SOCKET s, char* buf, int len, int flags) {
+    static volatile LONG n = 0;
+    bool show = should_log(n);
+    if (show) log("recv(%llu, len %d, flags 0x%x) waiting", static_cast<unsigned long long>(s), len, flags);
+    int r = recv(s, buf, len, flags);
+    int e = r < 0 ? WSAGetLastError() : 0;
+    if (show) log("recv(%llu) -> %d (error %d)", static_cast<unsigned long long>(s), r, e);
+    if (r < 0) WSASetLastError(e);
+    return r;
+}
+
+int WSAAPI n_send(SOCKET s, const char* buf, int len, int flags) {
+    static volatile LONG n = 0;
+    int r = send(s, buf, len, flags);
+    int e = r < 0 ? WSAGetLastError() : 0;
+    if (should_log(n)) log("send(%llu, len %d) -> %d (error %d)", static_cast<unsigned long long>(s), len, r, e);
+    if (r < 0) WSASetLastError(e);
+    return r;
+}
+
+int WSAAPI n_ioctlsocket(SOCKET s, long cmd, u_long* arg) {
+    static volatile LONG n = 0;
+    int r = ioctlsocket(s, cmd, arg);
+    int e = r ? WSAGetLastError() : 0;
+    if (should_log(n)) {
+        log("ioctlsocket(%llu, 0x%lx, %lu) -> %d (error %d)", static_cast<unsigned long long>(s),
+            static_cast<unsigned long>(cmd), arg ? *arg : 0, r, e);
+    }
+    if (r) WSASetLastError(e);
+    return r;
+}
+
+int WSAAPI n_select(int nfds, fd_set* rd, fd_set* wr, fd_set* ex, const timeval* timeout) {
+    static volatile LONG n = 0;
+    bool show = should_log(n);
+    if (show) {
+        log("select(read %u, write %u, timeout %ld ms) waiting", rd ? rd->fd_count : 0, wr ? wr->fd_count : 0,
+            timeout ? static_cast<long>(timeout->tv_sec * 1000 + timeout->tv_usec / 1000) : -1L);
+    }
+    int r = select(nfds, rd, wr, ex, timeout);
+    int e = r < 0 ? WSAGetLastError() : 0;
+    if (show) log("select -> %d (error %d)", r, e);
+    if (r < 0) WSASetLastError(e);
+    return r;
+}
+
+int WSAAPI n_WSAPoll(LPWSAPOLLFD fds, ULONG count, INT timeout) {
+    static volatile LONG n = 0;
+    bool show = should_log(n);
+    if (show) log("WSAPoll(%lu sockets, timeout %d) waiting", count, timeout);
+    int r = WSAPoll(fds, count, timeout);
+    int e = r < 0 ? WSAGetLastError() : 0;
+    if (show) log("WSAPoll -> %d (error %d)", r, e);
+    if (r < 0) WSASetLastError(e);
+    return r;
+}
+
 int WSAAPI n_WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_len, LPVOID out, DWORD out_len, LPDWORD returned,
                       LPWSAOVERLAPPED ov, LPWSAOVERLAPPED_COMPLETION_ROUTINE done) {
+    static volatile LONG n = 0;
+    bool show = should_log(n);
+    if (show) {
+        log("WSAIoctl(%llu, 0x%lx, %s) waiting", static_cast<unsigned long long>(s), code,
+            ov ? "overlapped" : "blocking");
+    }
     int r = WSAIoctl(s, code, in, in_len, out, out_len, returned, ov, done);
+    if (show) log("WSAIoctl(%llu, 0x%lx) -> %d (error %d)", static_cast<unsigned long long>(s), code, r, r ? WSAGetLastError() : 0);
     if (r == 0 && code == SIO_GET_EXTENSION_FUNCTION_POINTER && in && in_len >= sizeof(GUID) && out &&
         out_len >= sizeof(void*)) {
         static const GUID connect_ex = WSAID_CONNECTEX;
@@ -111,6 +178,7 @@ struct Override {
 #define NET(n) {#n, reinterpret_cast<void*>(&n_##n)}
 const Override kNetOverrides[] = {
     NET(connect), NET(bind), NET(listen), NET(accept), NET(WSAIoctl), NET(GetAddrInfoW), NET(getaddrinfo),
+    NET(recv), NET(send), NET(ioctlsocket), NET(select), NET(WSAPoll),
 };
 #undef NET
 
