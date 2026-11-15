@@ -272,8 +272,14 @@ BOOL WINAPI s_RegisterWaitForSingleObject(PHANDLE out, HANDLE h, WAITORTIMERCALL
 // own threads, which have no TLS for claude.exe. After the program exits its
 // threads are frozen, possibly holding locks, so its handlers must not run at all.
 
+// The program's handlers only see exceptions in its own code or on its own threads.
+// Its crash handler would otherwise end the program over a fault the app handles.
+bool program_exception(EXCEPTION_POINTERS* ep) {
+    return in_guest(ep->ExceptionRecord->ExceptionAddress) || tls_thread_owned();
+}
+
 LONG CALLBACK veh_trampoline(EXCEPTION_POINTERS* ep, PVECTORED_EXCEPTION_HANDLER handler) {
-    if (!program_running()) return EXCEPTION_CONTINUE_SEARCH;
+    if (!program_running() || !program_exception(ep)) return EXCEPTION_CONTINUE_SEARCH;
     void* saved = tls_enter();
     LONG r = handler(ep);
     tls_leave(saved);
@@ -295,7 +301,7 @@ volatile LONG g_filter_installed = 0;
 
 LONG WINAPI filter_trampoline(EXCEPTION_POINTERS* ep) {
     LPTOP_LEVEL_EXCEPTION_FILTER guest = g_guest_filter;
-    if (guest && program_running()) {
+    if (guest && program_running() && program_exception(ep)) {
         void* saved = tls_enter();
         LONG r = guest(ep);
         tls_leave(saved);

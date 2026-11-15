@@ -145,6 +145,11 @@ void tls_leave(void* previous) {
     TlsSetValue(g_slot, previous == reinterpret_cast<void*>(1) ? nullptr : previous);
 }
 
+bool tls_thread_owned() {
+    auto* t = g_key == TLS_OUT_OF_INDEXES ? nullptr : static_cast<ThreadTls*>(TlsGetValue(g_key));
+    return t && t->owned;
+}
+
 void tls_run_callbacks(DWORD reason) {
     if (!g_callbacks) return;
     for (PIMAGE_TLS_CALLBACK* cb = g_callbacks; *cb; ++cb) {

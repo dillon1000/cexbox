@@ -380,8 +380,15 @@ extern "C" XB_API int __stdcall xb_start(const wchar_t* exe_path, const wchar_t*
     register_guest_thread(main_thread);
     CloseHandle(main_thread);
     log("main thread started with a %zu byte stack", stack);
-    HANDLE dog = CreateThread(nullptr, 0, watchdog, nullptr, 0, nullptr);
-    if (dog) CloseHandle(dog);
+    // Stack dumps for diagnosing hangs, only when LocalState\watchdog.txt exists:
+    // walking a running thread's stack can fault.
+    if (log_dir && *log_dir) {
+        std::wstring flag = std::wstring(log_dir) + L"\\..\\watchdog.txt";
+        if (GetFileAttributesW(flag.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            HANDLE dog = CreateThread(nullptr, 0, watchdog, nullptr, 0, nullptr);
+            if (dog) CloseHandle(dog);
+        }
+    }
     return 0;
 }
 

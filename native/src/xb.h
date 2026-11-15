@@ -85,6 +85,8 @@ void tls_thread_exit();
 // For threads the program borrows: installs its TLS until tls_leave.
 void* tls_enter();
 void tls_leave(void* previous);
+// True on threads that belong to the program.
+bool tls_thread_owned();
 void tls_run_callbacks(DWORD reason);
 
 }  // namespace xb
