@@ -90,6 +90,50 @@ DWORD WINAPI output_reader(void*) {
     return 0;
 }
 
+// Describes a code address as module+offset.
+std::string describe_address(const void* at) {
+    char buf[300];
+    if (in_guest(at)) {
+        snprintf(buf, sizeof buf, "claude.exe+0x%llx",
+                 static_cast<unsigned long long>(static_cast<const uint8_t*>(at) - g_image.base));
+        return buf;
+    }
+    HMODULE m = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           static_cast<LPCWSTR>(at), &m) && m) {
+        wchar_t path[MAX_PATH];
+        DWORD n = GetModuleFileNameW(m, path, MAX_PATH);
+        const wchar_t* name = path;
+        for (DWORD i = 0; i < n; ++i) {
+            if (path[i] == L'\\') name = path + i + 1;
+        }
+        snprintf(buf, sizeof buf, "%s+0x%llx", narrow(name).c_str(),
+                 static_cast<unsigned long long>(static_cast<const uint8_t*>(at) - reinterpret_cast<uint8_t*>(m)));
+        return buf;
+    }
+    snprintf(buf, sizeof buf, "%p", at);
+    return buf;
+}
+
+// Walks the stack from an exception context using the unwind tables.
+void log_stack(const CONTEXT* ctx) {
+    CONTEXT c = *ctx;
+    for (int frame = 0; frame < 16 && c.Rip; ++frame) {
+        log("    #%d %s", frame, describe_address(reinterpret_cast<void*>(c.Rip)).c_str());
+        DWORD64 image_base = 0;
+        PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(c.Rip, &image_base, nullptr);
+        if (!fn) {
+            // A leaf function: the return address is on top of the stack.
+            c.Rip = *reinterpret_cast<DWORD64*>(c.Rsp);
+            c.Rsp += 8;
+            continue;
+        }
+        void* handler_data = nullptr;
+        DWORD64 establisher = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, c.Rip, fn, &c, &handler_data, &establisher, nullptr);
+    }
+}
+
 LONG CALLBACK log_crashes(EXCEPTION_POINTERS* ep) {
     DWORD code = ep->ExceptionRecord->ExceptionCode;
     bool serious = code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION ||
@@ -97,17 +141,13 @@ LONG CALLBACK log_crashes(EXCEPTION_POINTERS* ep) {
                    code == 0xC0000409 /* stack buffer overrun / fail fast */;
     if (serious) {
         static volatile LONG count = 0;
-        if (InterlockedIncrement(&count) <= 20) {
-            void* at = ep->ExceptionRecord->ExceptionAddress;
+        LONG n = InterlockedIncrement(&count);
+        if (n <= 20) {
             ULONG_PTR* info = ep->ExceptionRecord->ExceptionInformation;
-            if (in_guest(at)) {
-                log("exception 0x%08lx at claude.exe+0x%llx (info %llx %llx)", code,
-                    static_cast<unsigned long long>(static_cast<uint8_t*>(at) - g_image.base),
-                    static_cast<unsigned long long>(info[0]), static_cast<unsigned long long>(info[1]));
-            } else {
-                log("exception 0x%08lx at %p outside claude.exe (info %llx %llx)", code, at,
-                    static_cast<unsigned long long>(info[0]), static_cast<unsigned long long>(info[1]));
-            }
+            log("exception 0x%08lx at %s on thread %lu (info %llx %llx)", code,
+                describe_address(ep->ExceptionRecord->ExceptionAddress).c_str(), GetCurrentThreadId(),
+                static_cast<unsigned long long>(info[0]), static_cast<unsigned long long>(info[1]));
+            if (n <= 3) log_stack(ep->ContextRecord);
         }
     }
     return EXCEPTION_CONTINUE_SEARCH;
