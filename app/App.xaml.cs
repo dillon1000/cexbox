@@ -9,6 +9,9 @@ namespace Cexbox
         public App()
         {
             InitializeComponent();
+            // Xbox puts apps in mouse mode by default: the controller drives a cursor and
+            // the D-pad scrolls instead of sending keys. A terminal needs the keys.
+            RequiresPointerMode = ApplicationRequiresPointerMode.WhenRequested;
         }
 
         protected override void OnLaunched(LaunchActivatedEventArgs e)
