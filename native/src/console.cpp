@@ -11,6 +11,7 @@
 #include "xb.h"
 
 #include <deque>
+#include <stdio.h>
 #include <string.h>
 #include <vector>
 
@@ -184,9 +185,14 @@ BOOL WINAPI c_GetConsoleMode(HANDLE h, LPDWORD mode) {
     return TRUE;
 }
 
+// Each kind of console event logs at most this many times.
+bool log_once_more(volatile LONG& counter, LONG limit = 20) { return InterlockedIncrement(&counter) <= limit; }
+
 BOOL WINAPI c_SetConsoleMode(HANDLE h, DWORD mode) {
     Kind k = kind_of(h);
     if (!k) return SetConsoleMode(h, mode);
+    static volatile LONG n = 0;
+    if (log_once_more(n)) log("console: %s mode set to 0x%lx", k == kInput ? "input" : "output", mode);
     Lock lock;
     if (k == kInput) g_in_mode = mode;
     else g_out_mode = mode;
@@ -278,9 +284,79 @@ BOOL WINAPI c_WriteFile(HANDLE h, LPCVOID buf, DWORD n, LPDWORD written, LPOVERL
 
 BOOL WINAPI c_ReadConsoleW(HANDLE h, LPVOID buf, DWORD n, LPDWORD got, PCONSOLE_READCONSOLE_CONTROL control) {
     if (kind_of(h) != kInput) return ReadConsoleW(h, buf, n, got, control);
+    static volatile LONG calls = 0;
+    bool show = log_once_more(calls);
+    if (show) log("console: ReadConsoleW(%lu chars) waiting, mode 0x%lx", n, g_in_mode);
     DWORD count = n ? read_chars(static_cast<wchar_t*>(buf), n) : 0;
+    if (show) log("console: ReadConsoleW -> %lu chars", count);
     if (got) *got = count;
     return TRUE;
+}
+
+// Reads UTF-8 for ReadFile and NtReadFile on the console input.
+DWORD read_utf8(void* buf, DWORD n) {
+    if (!n) return 0;
+    {
+        Lock lock;
+        if (!g_ready_bytes.empty()) {
+            DWORD c = static_cast<DWORD>(g_ready_bytes.size() < n ? g_ready_bytes.size() : n);
+            memcpy(buf, g_ready_bytes.data(), c);
+            g_ready_bytes.erase(0, c);
+            return c;
+        }
+    }
+    wchar_t wide[1024];
+    DWORD chars = read_chars(wide, ARRAYSIZE(wide));
+    std::string utf8 = narrow(std::wstring(wide, chars).c_str(), CP_UTF8);
+    DWORD c = static_cast<DWORD>(utf8.size() < n ? utf8.size() : n);
+    memcpy(buf, utf8.data(), c);
+    if (utf8.size() > c) {
+        Lock lock;
+        g_ready_bytes.append(utf8, c, std::string::npos);
+    }
+    return c;
+}
+
+struct IoStatus {
+    union {
+        LONG status;
+        PVOID pointer;
+    };
+    ULONG_PTR information;
+};
+
+using NtReadFile_fn = LONG(NTAPI*)(HANDLE, HANDLE, PVOID, PVOID, IoStatus*, PVOID, ULONG, PLARGE_INTEGER, PULONG);
+using NtWriteFile_fn = LONG(NTAPI*)(HANDLE, HANDLE, PVOID, PVOID, IoStatus*, const void*, ULONG, PLARGE_INTEGER, PULONG);
+
+LONG NTAPI c_NtReadFile(HANDLE h, HANDLE event, PVOID apc, PVOID apc_ctx, IoStatus* io, PVOID buf, ULONG n,
+                        PLARGE_INTEGER offset, PULONG key) {
+    Kind k = kind_of(h);
+    if (k == kInput) {
+        static volatile LONG calls = 0;
+        bool show = log_once_more(calls);
+        if (show) log("console: NtReadFile(%lu bytes) waiting", n);
+        DWORD c = read_utf8(buf, n);
+        if (show) log("console: NtReadFile -> %lu bytes", c);
+        io->status = 0;
+        io->information = c;
+        if (event) SetEvent(event);
+        return 0;
+    }
+    static auto real = reinterpret_cast<NtReadFile_fn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtReadFile"));
+    return real ? real(h, event, apc, apc_ctx, io, buf, n, offset, key) : static_cast<LONG>(0xC0000002);
+}
+
+LONG NTAPI c_NtWriteFile(HANDLE h, HANDLE event, PVOID apc, PVOID apc_ctx, IoStatus* io, const void* buf, ULONG n,
+                         PLARGE_INTEGER offset, PULONG key) {
+    if (kind_of(h) == kOutput) {
+        output_write(static_cast<const char*>(buf), n);
+        io->status = 0;
+        io->information = n;
+        if (event) SetEvent(event);
+        return 0;
+    }
+    static auto real = reinterpret_cast<NtWriteFile_fn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtWriteFile"));
+    return real ? real(h, event, apc, apc_ctx, io, buf, n, offset, key) : static_cast<LONG>(0xC0000002);
 }
 
 BOOL WINAPI c_ReadFile(HANDLE h, LPVOID buf, DWORD n, LPDWORD got, LPOVERLAPPED ov) {
@@ -290,6 +366,8 @@ BOOL WINAPI c_ReadFile(HANDLE h, LPVOID buf, DWORD n, LPDWORD got, LPOVERLAPPED 
         return FALSE;
     }
     if (k != kInput) return ReadFile(h, buf, n, got, ov);
+    static volatile LONG calls = 0;
+    if (log_once_more(calls)) log("console: ReadFile(%lu bytes)%s", n, ov ? " overlapped" : "");
     if (!n) {
         if (got) *got = 0;
         return TRUE;
@@ -321,6 +399,8 @@ BOOL WINAPI c_ReadFile(HANDLE h, LPVOID buf, DWORD n, LPDWORD got, LPOVERLAPPED 
 
 BOOL WINAPI c_ReadConsoleInputW(HANDLE h, PINPUT_RECORD buf, DWORD n, LPDWORD got) {
     if (kind_of(h) != kInput) return ReadConsoleInputW(h, buf, n, got);
+    static volatile LONG calls = 0;
+    bool show = log_once_more(calls);
     for (;;) {
         {
             Lock lock;
@@ -332,6 +412,7 @@ BOOL WINAPI c_ReadConsoleInputW(HANDLE h, PINPUT_RECORD buf, DWORD n, LPDWORD go
                 }
                 if (g_queue.empty()) ResetEvent(g_in);
                 if (got) *got = c;
+                if (show) log("console: ReadConsoleInputW -> %lu records", c);
                 return TRUE;
             }
         }
@@ -360,6 +441,8 @@ BOOL WINAPI c_GetNumberOfConsoleInputEvents(HANDLE h, LPDWORD count) {
 
 BOOL WINAPI c_FlushConsoleInputBuffer(HANDLE h) {
     if (kind_of(h) != kInput) return FlushConsoleInputBuffer(h);
+    static volatile LONG calls = 0;
+    if (log_once_more(calls)) log("console: input buffer flushed (%zu records dropped)", g_queue.size());
     Lock lock;
     g_queue.clear();
     ResetEvent(g_in);
@@ -451,6 +534,8 @@ const Override kConsoleOverrides[] = {
     CONSOLE(GenerateConsoleCtrlEvent),
     CONSOLE(GetConsoleTitleW),
     CONSOLE(SetConsoleTitleW),
+    CONSOLE(NtReadFile),
+    CONSOLE(NtWriteFile),
 };
 #undef CONSOLE
 
@@ -481,6 +566,18 @@ void console_push_text(const char* utf8, size_t n) {
     ensure_lock();
     if (!n) return;
     std::wstring wide = widen(std::string(utf8, n).c_str(), CP_UTF8);
+    static volatile LONG calls = 0;
+    if (log_once_more(calls, 40)) {
+        std::string shown;
+        for (size_t i = 0; i < n && i < 24; ++i) {
+            unsigned char c = static_cast<unsigned char>(utf8[i]);
+            char part[8];
+            if (c < 0x20 || c >= 0x7f) snprintf(part, sizeof part, "\\x%02x", c);
+            else snprintf(part, sizeof part, "%c", c);
+            shown += part;
+        }
+        log("console: input \"%s\" queued", shown.c_str());
+    }
     Lock lock;
     for (wchar_t c : wide) g_queue.push_back(key_record(c));
     if (g_enabled && !wide.empty()) SetEvent(g_in);

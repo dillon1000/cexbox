@@ -229,6 +229,7 @@ namespace Cexbox
                 ScrollOffset = 0;
                 _canvas.Invalidate();
             }
+            AppLog.Write($"terminal sends \"{AppLog.Visible(s)}\"");
             Input?.Invoke(s);
         }
 
@@ -236,6 +237,7 @@ namespace Cexbox
 
         void OnKeyDown(object sender, KeyRoutedEventArgs e)
         {
+            AppLog.Write($"terminal KeyDown {e.Key} (original {e.OriginalKey})");
             bool ctrl = IsDown(VirtualKey.Control);
             bool shift = IsDown(VirtualKey.Shift);
             string s = null;

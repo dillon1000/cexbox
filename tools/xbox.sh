@@ -4,6 +4,7 @@
 #
 #   tools/xbox.sh install dist/            install the .msix and .appx files in a folder
 #   tools/xbox.sh run [args]               start Claude Code (via autostart.txt) and launch the app
+#   tools/xbox.sh input '\e[B\r'           send keystrokes (escapes: \e \r \n \t \xNN)
 #   tools/xbox.sh stop                     close the app
 #   tools/xbox.sh logs [dir]               download loader.log and output.log
 #   tools/xbox.sh screenshot [file.png]    save what's on screen
@@ -64,6 +65,15 @@ run)
     curl -sk -b "$JAR" -H "X-CSRF-Token: $token" -X POST --data "" \
         "$BASE/api/taskmanager/app?appid=$(b64 "$(app_id)")&package=$(b64 "$pkg")" -w "launch: http %{http_code}\n" -o /dev/null
     ;;
+input)
+    # Sends keystrokes to the running program. Escapes: \e \r \n \t \xNN (e.g. '\e[B\r' = down, enter).
+    pkg="$(package_name)"
+    token="$(csrf)"
+    printf '%s' "${2:-}" > /tmp/input.txt
+    curl -sk -b "$JAR" -H "X-CSRF-Token: $token" -F "file=@/tmp/input.txt;filename=input.txt" \
+        "$BASE/api/filesystem/apps/file?knownfolderid=LocalAppData&packagefullname=$pkg&path=%5CLocalState" \
+        -w "input: http %{http_code}\n" -o /dev/null
+    ;;
 stop)
     token="$(csrf)"
     curl -sk -b "$JAR" -H "X-CSRF-Token: $token" -X DELETE "$BASE/api/taskmanager/app?package=$(b64 "$(package_name)")" \
@@ -73,7 +83,7 @@ logs)
     dir="${2:-dist/xbox-logs}"
     mkdir -p "$dir"
     pkg="$(package_name)"
-    for f in loader.log output.log; do
+    for f in loader.log output.log app.log; do
         curl -sk -G "$BASE/api/filesystem/apps/file" \
             --data-urlencode "knownfolderid=LocalAppData" --data-urlencode "packagefullname=$pkg" \
             --data-urlencode "filename=$f" --data-urlencode 'path=\LocalState\logs' -o "$dir/$f"

@@ -33,7 +33,16 @@ namespace Cexbox
         public MainPage()
         {
             InitializeComponent();
+            AppLog.Reset();
             Loaded += OnLoaded;
+
+            // Every key the window sees, and which control had focus at the time.
+            Window.Current.CoreWindow.KeyDown += (s, e) =>
+            {
+                object focused = FocusManager.GetFocusedElement();
+                AppLog.Write($"window KeyDown {e.VirtualKey}, focus on {focused?.GetType().Name ?? "nothing"}" +
+                             (focused is FrameworkElement fe && !string.IsNullOrEmpty(fe.Name) ? $" ({fe.Name})" : ""));
+            };
 
             Terminal.Input += s => SendToProgram(s);
             Terminal.Terminal.Reply = s => SendToProgram(s);
@@ -192,8 +201,51 @@ namespace Cexbox
             Terminal.Focus(FocusState.Programmatic);
         }
 
+        int _pumps;
+
+        // For testing from a PC: LocalState\input.txt (uploaded with the Device Portal) is
+        // sent to the program as keystrokes, then deleted. \e, \r, \n, \t and \xNN are escapes.
+        void CheckRemoteInput()
+        {
+            string path = Path.Combine(_root, "input.txt");
+            if (!File.Exists(path)) return;
+            string raw;
+            try
+            {
+                raw = File.ReadAllText(path);
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                return;
+            }
+            var sb = new StringBuilder();
+            for (int i = 0; i < raw.Length; i++)
+            {
+                if (raw[i] != '\\' || i + 1 >= raw.Length)
+                {
+                    sb.Append(raw[i]);
+                    continue;
+                }
+                char c = raw[++i];
+                if (c == 'e') sb.Append('\x1b');
+                else if (c == 'r') sb.Append('\r');
+                else if (c == 'n') sb.Append('\n');
+                else if (c == 't') sb.Append('\t');
+                else if (c == 'x' && i + 2 < raw.Length)
+                {
+                    sb.Append((char)Convert.ToInt32(raw.Substring(i + 1, 2), 16));
+                    i += 2;
+                }
+                else sb.Append(c);
+            }
+            AppLog.Write($"remote input \"{AppLog.Visible(sb.ToString())}\"");
+            SendToProgram(sb.ToString());
+        }
+
         void Pump()
         {
+            if (++_pumps % 30 == 0) CheckRemoteInput();
             if (_running)
             {
                 int n;
@@ -220,7 +272,11 @@ namespace Cexbox
 
         void SendToProgram(string text)
         {
-            if (!_running) return;
+            if (!_running)
+            {
+                AppLog.Write("input dropped: Claude Code isn't running");
+                return;
+            }
             byte[] bytes = Encoding.UTF8.GetBytes(text);
             Native.xb_console_input(bytes, bytes.Length);
         }

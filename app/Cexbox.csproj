@@ -50,6 +50,7 @@
     <Compile Include="MainPage.xaml.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="AppLog.cs" />
     <Compile Include="ClaudeDownloader.cs" />
     <Compile Include="Native.cs" />
     <Compile Include="TerminalView.cs" />
