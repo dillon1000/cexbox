@@ -16,8 +16,9 @@ namespace Cexbox
     // the bytes a terminal would send.
     sealed class TerminalView : UserControl
     {
-        const float FontSize = 15f;
-        const string FontFamily = "Consolas";
+        const float FontSize = 12f;
+        // Bundled with the app: the Xbox has no monospace font of its own.
+        const string FontFamily = "ms-appx:///Fonts/CascadiaMono.ttf#Cascadia Mono";
 
         static readonly Color Background = Color.FromArgb(255, 20, 24, 22);
         static readonly Color Foreground = Color.FromArgb(255, 222, 228, 224);

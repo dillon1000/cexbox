@@ -1,12 +1,15 @@
 // Static thread-local storage for the hand-loaded program.
 //
 // Compiled code finds its TLS block through the thread's ThreadLocalStoragePointer
-// array (TEB + 0x58), at the index stored in the image's _tls_index. Windows only
-// fills that array for modules it loaded itself, so for claude.exe we pick an unused
-// index, give each thread a larger copy of the array, and put claude.exe's block in it.
+// array (TEB + 0x58). Windows always gives the main executable index 0 in that array,
+// so compilers hard-code slot 0 for an .exe instead of reading _tls_index. claude.exe
+// therefore needs its block in slot 0, where the app's own executable normally is.
 //
-// Known limit: if Windows later loads another DLL with static TLS, it rebuilds the
-// array at its own size and drops our entry for threads that already exist.
+// - Threads that belong to the program get their own copy of the array, with the
+//   program's block in slot 0 for good.
+// - Threads the program borrows (thread-pool callbacks, exception handlers that run
+//   on whatever thread faulted) get the program's block in slot 0 only while its
+//   code runs, and the app's own entry back afterwards.
 #include "xb.h"
 
 #include <string.h>
@@ -15,20 +18,25 @@ namespace xb {
 
 namespace {
 
-bool g_has_tls = false;
-const uint8_t* g_template = nullptr;
-size_t g_template_size = 0;
-size_t g_zero_fill = 0;
-ULONG g_slot = 0;
-size_t g_copy_count = 0;
-DWORD g_mark = TLS_OUT_OF_INDEXES;
-PIMAGE_TLS_CALLBACK* g_callbacks = nullptr;
-
 constexpr size_t kTebTlsPointer = 0x58;
 constexpr size_t kTebPeb = 0x60;
 constexpr size_t kPebLdr = 0x18;
 constexpr size_t kLdrInLoadOrder = 0x10;
-constexpr ULONG kSpareSlots = 32;
+
+bool g_has_tls = false;
+const uint8_t* g_template = nullptr;
+size_t g_template_size = 0;
+size_t g_zero_fill = 0;
+size_t g_copy_count = 0;  // entries Windows uses in each thread's array
+DWORD g_key = TLS_OUT_OF_INDEXES;
+PIMAGE_TLS_CALLBACK* g_callbacks = nullptr;
+
+struct ThreadTls {
+    void** vec = nullptr;    // the array we installed for this thread
+    size_t len = 0;
+    void* block = nullptr;   // the program's TLS block for this thread
+    bool owned = false;      // the thread belongs to the program
+};
 
 struct LdrEntry {
     LIST_ENTRY in_load_order;
@@ -59,9 +67,49 @@ long highest_loaded_tls_index() {
     return high;
 }
 
+void*** teb_vector() {
+    return reinterpret_cast<void***>(reinterpret_cast<uint8_t*>(NtCurrentTeb()) + kTebTlsPointer);
+}
+
+// Makes sure this thread has an array we control, at least one entry long, and a
+// program TLS block. Returns null if memory ran out.
+ThreadTls* prepare_thread() {
+    auto* t = static_cast<ThreadTls*>(TlsGetValue(g_key));
+    HANDLE heap = GetProcessHeap();
+    if (!t) {
+        t = static_cast<ThreadTls*>(HeapAlloc(heap, HEAP_ZERO_MEMORY, sizeof(ThreadTls)));
+        if (!t) return nullptr;
+        TlsSetValue(g_key, t);
+    }
+    void*** slot = teb_vector();
+    if (!t->vec || *slot != t->vec) {
+        // Windows frees this array with the process heap when the thread ends, so it must come from there.
+        size_t len = g_copy_count > 0 ? g_copy_count : 1;
+        auto** vec = static_cast<void**>(HeapAlloc(heap, HEAP_ZERO_MEMORY, len * sizeof(void*)));
+        if (!vec) return nullptr;
+        if (*slot) memcpy(vec, *slot, g_copy_count * sizeof(void*));
+        *slot = vec;
+        t->vec = vec;
+        t->len = len;
+    }
+    if (!t->block) {
+        auto* block = static_cast<uint8_t*>(HeapAlloc(heap, 0, g_template_size + g_zero_fill + 16));
+        if (!block) return nullptr;
+        memcpy(block, g_template, g_template_size);
+        memset(block + g_template_size, 0, g_zero_fill);
+        t->block = block;
+    }
+    return t;
+}
+
 }  // namespace
 
 bool tls_init(Image& img, std::string& err) {
+    g_key = TlsAlloc();
+    if (g_key == TLS_OUT_OF_INDEXES) {
+        err = "Out of TLS slots";
+        return false;
+    }
     auto& dd = img.nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
     if (!dd.VirtualAddress || !dd.Size) {
         log("claude.exe has no static TLS");
@@ -73,44 +121,39 @@ bool tls_init(Image& img, std::string& err) {
     g_template_size = static_cast<size_t>(t->EndAddressOfRawData - t->StartAddressOfRawData);
     g_zero_fill = t->SizeOfZeroFill;
     g_callbacks = reinterpret_cast<PIMAGE_TLS_CALLBACK*>(t->AddressOfCallBacks);
-
-    long high = highest_loaded_tls_index();
-    g_copy_count = static_cast<size_t>(high + 1);
-    g_slot = static_cast<ULONG>(g_copy_count) + kSpareSlots;
-    *reinterpret_cast<ULONG*>(t->AddressOfIndex) = g_slot;
-
-    g_mark = TlsAlloc();
-    if (g_mark == TLS_OUT_OF_INDEXES) {
-        err = "Out of TLS slots";
-        return false;
-    }
+    g_copy_count = static_cast<size_t>(highest_loaded_tls_index() + 1);
+    *reinterpret_cast<ULONG*>(t->AddressOfIndex) = 0;
     g_has_tls = true;
-    log("TLS: %zu byte template, %zu zero fill, slot %lu (Windows uses %zu)", g_template_size, g_zero_fill,
-        g_slot, g_copy_count);
+    log("TLS: %zu byte template in slot 0 (Windows uses %zu slots)", g_template_size, g_copy_count);
     return true;
 }
 
 void tls_ensure_thread() {
-    if (!g_has_tls || TlsGetValue(g_mark)) return;
-
-    HANDLE heap = GetProcessHeap();
-    auto* teb = reinterpret_cast<uint8_t*>(NtCurrentTeb());
-    auto** old_vec = *reinterpret_cast<void***>(teb + kTebTlsPointer);
-    size_t len = static_cast<size_t>(g_slot) + 1;
-
-    // Windows frees this array with the process heap when the thread ends, so it must come from there.
-    auto** vec = static_cast<void**>(HeapAlloc(heap, HEAP_ZERO_MEMORY, len * sizeof(void*)));
-    auto* block = static_cast<uint8_t*>(HeapAlloc(heap, 0, g_template_size + g_zero_fill + 16));
-    if (!vec || !block) {
+    if (!g_has_tls) return;
+    ThreadTls* t = prepare_thread();
+    if (!t) {
         log("TLS: out of memory setting up thread %lu", GetCurrentThreadId());
         return;
     }
-    if (old_vec && g_copy_count) memcpy(vec, old_vec, g_copy_count * sizeof(void*));
-    memcpy(block, g_template, g_template_size);
-    memset(block + g_template_size, 0, g_zero_fill);
-    vec[g_slot] = block;
-    *reinterpret_cast<void***>(teb + kTebTlsPointer) = vec;
-    TlsSetValue(g_mark, reinterpret_cast<void*>(1));
+    t->vec[0] = t->block;
+    t->owned = true;
+}
+
+void* tls_enter() {
+    if (!g_has_tls) return nullptr;
+    ThreadTls* t = prepare_thread();
+    if (!t) return nullptr;
+    if (t->owned) return nullptr;
+    void* previous = t->vec[0];
+    t->vec[0] = t->block;
+    return previous ? previous : reinterpret_cast<void*>(1);
+}
+
+void tls_leave(void* previous) {
+    if (!previous) return;
+    auto* t = static_cast<ThreadTls*>(TlsGetValue(g_key));
+    if (!t || t->owned || !t->vec) return;
+    t->vec[0] = previous == reinterpret_cast<void*>(1) ? nullptr : previous;
 }
 
 void tls_run_callbacks(DWORD reason) {

@@ -199,8 +199,10 @@ HANDLE WINAPI s_CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_ST
 DWORD WINAPI work_trampoline(void* p) {
     ThreadStart s = *static_cast<ThreadStart*>(p);
     HeapFree(GetProcessHeap(), 0, p);
-    tls_ensure_thread();
-    return s.fn(s.arg);
+    void* saved = tls_enter();
+    DWORD r = s.fn(s.arg);
+    tls_leave(saved);
+    return r;
 }
 
 BOOL WINAPI s_QueueUserWorkItem(LPTHREAD_START_ROUTINE fn, PVOID ctx, ULONG flags) {
@@ -226,11 +228,12 @@ struct WaitStart {
 
 VOID CALLBACK wait_trampoline(PVOID p, BOOLEAN fired) {
     auto* w = static_cast<WaitStart*>(p);
-    tls_ensure_thread();
     WAITORTIMERCALLBACK fn = w->fn;
     void* ctx = w->ctx;
     if (w->once) HeapFree(GetProcessHeap(), 0, w);
+    void* saved = tls_enter();
     fn(ctx, fired);
+    tls_leave(saved);
 }
 
 BOOL WINAPI s_RegisterWaitForSingleObject(PHANDLE out, HANDLE h, WAITORTIMERCALLBACK fn, PVOID ctx, ULONG ms,
@@ -257,8 +260,10 @@ BOOL WINAPI s_RegisterWaitForSingleObject(PHANDLE out, HANDLE h, WAITORTIMERCALL
 
 LONG CALLBACK veh_trampoline(EXCEPTION_POINTERS* ep, PVECTORED_EXCEPTION_HANDLER handler) {
     if (!program_running()) return EXCEPTION_CONTINUE_SEARCH;
-    tls_ensure_thread();
-    return handler(ep);
+    void* saved = tls_enter();
+    LONG r = handler(ep);
+    tls_leave(saved);
+    return r;
 }
 
 PVOID WINAPI s_AddVectoredExceptionHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler) {
@@ -277,8 +282,9 @@ volatile LONG g_filter_installed = 0;
 LONG WINAPI filter_trampoline(EXCEPTION_POINTERS* ep) {
     LPTOP_LEVEL_EXCEPTION_FILTER guest = g_guest_filter;
     if (guest && program_running()) {
-        tls_ensure_thread();
+        void* saved = tls_enter();
         LONG r = guest(ep);
+        tls_leave(saved);
         if (r != EXCEPTION_CONTINUE_SEARCH) return r;
     }
     return g_host_filter ? g_host_filter(ep) : EXCEPTION_CONTINUE_SEARCH;

@@ -11,3 +11,4 @@ tools/vtcheck/obj/
 *.bin
 .vs/
 xbox-claude-code.html
+.DS_Store

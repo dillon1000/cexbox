@@ -66,6 +66,17 @@ namespace Cexbox
             _timer.Tick += (s, args) => Pump();
             _timer.Start();
             Terminal.Focus(FocusState.Programmatic);
+
+            // For testing from a PC: LocalState\autostart.txt (uploaded with the Device Portal)
+            // starts Claude Code right away, with the file's contents as arguments. It's
+            // deleted first, so it only applies to one launch.
+            string autostart = Path.Combine(_root, "autostart.txt");
+            if (File.Exists(autostart) && File.Exists(ClaudeExe))
+            {
+                ArgsBox.Text = File.ReadAllText(autostart).Trim();
+                File.Delete(autostart);
+                var _ = Dispatcher.RunAsync(CoreDispatcherPriority.Low, () => Run_Click(this, null));
+            }
         }
 
         void RefreshStatus()

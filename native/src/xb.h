@@ -73,7 +73,11 @@ void* console_override(const char* name);
 
 // tls.cpp
 bool tls_init(Image& img, std::string& err);
+// For threads that belong to the program: installs its TLS for good.
 void tls_ensure_thread();
+// For threads the program borrows: installs its TLS until tls_leave.
+void* tls_enter();
+void tls_leave(void* previous);
 void tls_run_callbacks(DWORD reason);
 
 }  // namespace xb
