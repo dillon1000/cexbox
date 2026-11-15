@@ -110,7 +110,21 @@ namespace Cexbox
             _canvas.Invalidate();
         }
 
+        int _drawErrors;
+
         void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
+        {
+            try
+            {
+                Draw(args);
+            }
+            catch (Exception ex)
+            {
+                if (++_drawErrors <= 5) AppLog.Write("drawing failed: " + ex);
+            }
+        }
+
+        void Draw(CanvasDrawEventArgs args)
         {
             if (!_measured) return;
             var ds = args.DrawingSession;

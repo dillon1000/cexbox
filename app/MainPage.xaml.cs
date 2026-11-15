@@ -96,7 +96,17 @@ namespace Cexbox
             }
 
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-            _timer.Tick += (s, args) => Pump();
+            _timer.Tick += (s, args) =>
+            {
+                try
+                {
+                    Pump();
+                }
+                catch (Exception ex)
+                {
+                    if (++_pumpErrors <= 5) AppLog.Write("output pump failed: " + ex);
+                }
+            };
             _timer.Start();
             Terminal.Focus(FocusState.Programmatic);
 
@@ -229,6 +239,7 @@ namespace Cexbox
         }
 
         int _pumps;
+        int _pumpErrors;
 
         // For testing from a PC: LocalState\input.txt (uploaded with the Device Portal) is
         // sent to the program as keystrokes, then deleted. \e, \r, \n, \t and \xNN are escapes.
