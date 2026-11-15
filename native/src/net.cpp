@@ -192,6 +192,7 @@ void* net_override(const char* name) {
 }
 
 // Names of the Winsock 1 (wsock32.dll) functions programs import by ordinal.
+// wsock32's numbering is not ws2_32's: 10-12 are in a different order there.
 const char* wsock32_name(uint16_t ordinal) {
     switch (ordinal) {
     case 1: return "accept";
@@ -203,9 +204,9 @@ const char* wsock32_name(uint16_t ordinal) {
     case 7: return "getsockopt";
     case 8: return "htonl";
     case 9: return "htons";
-    case 10: return "ioctlsocket";
-    case 11: return "inet_addr";
-    case 12: return "inet_ntoa";
+    case 10: return "inet_addr";
+    case 11: return "inet_ntoa";
+    case 12: return "ioctlsocket";
     case 13: return "listen";
     case 14: return "ntohl";
     case 15: return "ntohs";
