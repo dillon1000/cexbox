@@ -25,12 +25,24 @@ enum {
 // Sets an environment variable for the program before it starts. Returns 0 or a Win32 error.
 XB_API int __stdcall xb_setenv(const wchar_t* name, const wchar_t* value);
 
+// Flags for xb_start.
+enum {
+    // Give the program a virtual console instead of pipes, so it sees a terminal.
+    XB_FLAG_CONSOLE = 1,
+};
+
 // Loads exe_path into this process and starts it on its own thread.
 // command_line is the full command line, program name included.
 // log_dir receives loader.log and output.log. Only one program can run per app launch.
 // Returns 0 on success; on failure, xb_last_error describes what went wrong.
 XB_API int __stdcall xb_start(const wchar_t* exe_path, const wchar_t* command_line,
-                              const wchar_t* work_dir, const wchar_t* log_dir);
+                              const wchar_t* work_dir, const wchar_t* log_dir, int flags);
+
+// Sends keystrokes (UTF-8, terminal escape sequences included) to the virtual console.
+XB_API int __stdcall xb_console_input(const uint8_t* buffer, int length);
+
+// Sets the virtual console's size in character cells. Can be called before xb_start.
+XB_API int __stdcall xb_console_resize(int columns, int rows);
 
 // Copies up to capacity bytes of the program's stdout and stderr (UTF-8). Returns the count.
 XB_API int __stdcall xb_read_output(uint8_t* buffer, int capacity);

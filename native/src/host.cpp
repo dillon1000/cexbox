@@ -33,6 +33,8 @@ HANDLE g_stdin_read = nullptr;
 HANDLE g_stdin_write = nullptr;
 HANDLE g_stdout_read = nullptr;
 HANDLE volatile g_stdout_write = nullptr;
+HANDLE g_stderr_write = nullptr;
+bool g_use_pipes = false;  // false when the program has the virtual console
 
 // RTL_USER_PROCESS_PARAMETERS field offsets on x64.
 constexpr size_t kTebPeb = 0x60;
@@ -75,7 +77,7 @@ void patch_process_parameters() {
     auto* params = *reinterpret_cast<uint8_t**>(peb + kPebParams);
     *reinterpret_cast<HANDLE*>(params + kParamsStdIn) = g_stdin_read;
     *reinterpret_cast<HANDLE*>(params + kParamsStdOut) = g_stdout_write;
-    *reinterpret_cast<HANDLE*>(params + kParamsStdErr) = g_stdout_write;
+    *reinterpret_cast<HANDLE*>(params + kParamsStdErr) = g_stderr_write;
     set_unicode_string(params + kParamsImagePath, g_image.path);
     set_unicode_string(params + kParamsCommandLine, g_command_w);
 }
@@ -83,16 +85,7 @@ void patch_process_parameters() {
 DWORD WINAPI output_reader(void*) {
     char buf[16384];
     DWORD n = 0;
-    while (ReadFile(g_stdout_read, buf, sizeof buf, &n, nullptr) && n) {
-        EnterCriticalSection(&g_out_lock);
-        if (g_output.size() + n > kOutputLimit) g_output.erase(0, g_output.size() / 2);
-        g_output.append(buf, n);
-        LeaveCriticalSection(&g_out_lock);
-        if (g_output_file != INVALID_HANDLE_VALUE) {
-            DWORD written = 0;
-            WriteFile(g_output_file, buf, n, &written, nullptr);
-        }
-    }
+    while (ReadFile(g_stdout_read, buf, sizeof buf, &n, nullptr) && n) output_write(buf, n);
     log("program output closed");
     return 0;
 }
@@ -170,6 +163,18 @@ std::wstring widen(const char* s, UINT code_page) {
 
 bool program_running() { return g_state == XB_RUNNING; }
 
+void output_write(const char* data, size_t n) {
+    if (!n) return;
+    EnterCriticalSection(&g_out_lock);
+    if (g_output.size() + n > kOutputLimit) g_output.erase(0, g_output.size() / 2);
+    g_output.append(data, n);
+    LeaveCriticalSection(&g_out_lock);
+    if (g_output_file != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        WriteFile(g_output_file, data, static_cast<DWORD>(n), &written, nullptr);
+    }
+}
+
 const std::wstring& command_line_w() { return g_command_w; }
 const std::string& command_line_a() { return g_command_a; }
 
@@ -193,8 +198,10 @@ void register_guest_thread(HANDLE thread) {
             if (GetThreadId(h) != self) SuspendThread(h);
         }
         LeaveCriticalSection(&g_thread_lock);
-        HANDLE w = InterlockedExchangePointer(const_cast<HANDLE*>(&g_stdout_write), nullptr);
-        if (w) CloseHandle(w);
+        if (g_use_pipes) {
+            HANDLE w = InterlockedExchangePointer(const_cast<HANDLE*>(&g_stdout_write), nullptr);
+            if (w) CloseHandle(w);
+        }
     }
     ExitThread(code);
 }
@@ -217,8 +224,19 @@ extern "C" XB_API int __stdcall xb_setenv(const wchar_t* name, const wchar_t* va
     return SetEnvironmentVariableW(name, value) ? 0 : static_cast<int>(GetLastError());
 }
 
+extern "C" XB_API int __stdcall xb_console_input(const uint8_t* buffer, int length) {
+    if (!buffer || length <= 0) return 0;
+    console_push_text(reinterpret_cast<const char*>(buffer), static_cast<size_t>(length));
+    return length;
+}
+
+extern "C" XB_API int __stdcall xb_console_resize(int columns, int rows) {
+    console_resize(static_cast<SHORT>(columns), static_cast<SHORT>(rows));
+    return 0;
+}
+
 extern "C" XB_API int __stdcall xb_start(const wchar_t* exe_path, const wchar_t* command_line,
-                                         const wchar_t* work_dir, const wchar_t* log_dir) {
+                                         const wchar_t* work_dir, const wchar_t* log_dir, int flags) {
     if (InterlockedCompareExchange(&g_state, XB_STARTING, XB_NOT_STARTED) != XB_NOT_STARTED) {
         g_error = L"A program has already run in this app session. Restart the app to run it again.";
         return -1;
@@ -241,15 +259,25 @@ extern "C" XB_API int __stdcall xb_start(const wchar_t* exe_path, const wchar_t*
 
     shims_init();
 
-    HANDLE out_write = nullptr;
-    if (!CreatePipe(&g_stdin_read, &g_stdin_write, nullptr, 0) ||
-        !CreatePipe(&g_stdout_read, &out_write, nullptr, 1 << 16)) {
-        return fail("Could not create the program's input and output pipes");
+    bool use_console = (flags & XB_FLAG_CONSOLE) != 0;
+    if (use_console) {
+        if (!console_init()) return fail("Could not create the virtual console");
+        g_stdin_read = console_stdin();
+        g_stdout_write = console_stdout();
+        g_stderr_write = console_stderr();
+    } else {
+        HANDLE out_write = nullptr;
+        if (!CreatePipe(&g_stdin_read, &g_stdin_write, nullptr, 0) ||
+            !CreatePipe(&g_stdout_read, &out_write, nullptr, 1 << 16)) {
+            return fail("Could not create the program's input and output pipes");
+        }
+        g_stdout_write = out_write;
+        g_stderr_write = out_write;
+        g_use_pipes = true;
     }
-    g_stdout_write = out_write;
     SetStdHandle(STD_INPUT_HANDLE, g_stdin_read);
-    SetStdHandle(STD_OUTPUT_HANDLE, out_write);
-    SetStdHandle(STD_ERROR_HANDLE, out_write);
+    SetStdHandle(STD_OUTPUT_HANDLE, g_stdout_write);
+    SetStdHandle(STD_ERROR_HANDLE, g_stderr_write);
 
     std::string err;
     if (!load_image(exe_path, g_image, err)) return fail(err);
@@ -257,8 +285,10 @@ extern "C" XB_API int __stdcall xb_start(const wchar_t* exe_path, const wchar_t*
 
     AddVectoredExceptionHandler(1, log_crashes);
 
-    HANDLE reader = CreateThread(nullptr, 0, output_reader, nullptr, 0, nullptr);
-    if (reader) CloseHandle(reader);
+    if (!use_console) {
+        HANDLE reader = CreateThread(nullptr, 0, output_reader, nullptr, 0, nullptr);
+        if (reader) CloseHandle(reader);
+    }
 
     size_t stack = g_image.stack_reserve ? g_image.stack_reserve : (16u << 20);
     InterlockedExchange(&g_state, XB_RUNNING);

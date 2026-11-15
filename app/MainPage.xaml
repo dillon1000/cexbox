@@ -2,38 +2,59 @@
     x:Class="Cexbox.MainPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    xmlns:local="using:Cexbox"
+    Background="#141816">
 
-    <Grid Padding="48,27,48,27" RowSpacing="12">
+    <Grid Padding="48,27,48,27" RowSpacing="10">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TextBlock Text="Claude Code on Xbox" Style="{StaticResource SubtitleTextBlockStyle}" />
-        <TextBlock x:Name="StatusText" Grid.Row="1" TextWrapping="Wrap" />
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="#C8D0CB" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                <Button x:Name="DownloadButton" Content="Download Claude Code" Click="Download_Click" />
+                <TextBox x:Name="ArgsBox" Width="260" PlaceholderText="Arguments (optional)" />
+                <Button x:Name="RunButton" Content="Start Claude Code" Click="Run_Click" IsEnabled="False" />
+                <Button x:Name="LinkButton" Content="Sign-in link" Click="Link_Click" />
+                <Button x:Name="RestartButton" Content="Restart app" Click="Restart_Click" Visibility="Collapsed" />
+            </StackPanel>
+        </Grid>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
-            <Button x:Name="DownloadButton" Content="Download Claude Code" Click="Download_Click" />
-            <TextBox x:Name="ArgsBox" Text="--version" Width="420" PlaceholderText="Arguments" />
-            <Button x:Name="RunButton" Content="Run" Click="Run_Click" IsEnabled="False" />
-            <Button x:Name="RestartButton" Content="Restart app" Click="Restart_Click" Visibility="Collapsed" />
-        </StackPanel>
+        <ProgressBar x:Name="Progress" Grid.Row="1" Maximum="1" Visibility="Collapsed" />
 
-        <ProgressBar x:Name="Progress" Grid.Row="3" Maximum="1" Visibility="Collapsed" />
+        <Border Grid.Row="2" Background="#141816" BorderBrush="#2A352D" BorderThickness="1" CornerRadius="6" Padding="8">
+            <local:TerminalView x:Name="Terminal" />
+        </Border>
 
-        <ScrollViewer x:Name="OutputScroll" Grid.Row="4" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                      Background="{ThemeResource SystemControlBackgroundAltHighBrush}" Padding="12">
-            <TextBlock x:Name="OutputText" FontFamily="Consolas" FontSize="14" IsTextSelectionEnabled="True" />
-        </ScrollViewer>
+        <Grid Grid.Row="3" ColumnSpacing="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="InputBox" PlaceholderText="Type here with the on-screen keyboard (controller Y), then send" KeyDown="InputBox_KeyDown" />
+            <Button x:Name="SendButton" Grid.Column="1" Content="Send" Click="Send_Click" />
+            <Button Grid.Column="2" Content="Back to terminal" Click="Focus_Click" />
+        </Grid>
 
-        <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="12">
-            <TextBox x:Name="InputBox" Width="600" PlaceholderText="Type a line to send to the program" />
-            <Button x:Name="SendButton" Content="Send" Click="Send_Click" IsEnabled="False" />
-        </StackPanel>
+        <Grid x:Name="LinkOverlay" Grid.RowSpan="4" Background="#E6141816" Visibility="Collapsed">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" MaxWidth="720">
+                <TextBlock Text="Scan to sign in on your phone" FontSize="24" HorizontalAlignment="Center" Foreground="#E4EBE6" />
+                <Border Background="White" Padding="16" CornerRadius="8" HorizontalAlignment="Center">
+                    <Image x:Name="LinkImage" Width="320" Height="320" />
+                </Border>
+                <TextBlock x:Name="LinkText" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontFamily="Consolas" FontSize="12" Foreground="#9AA89E" />
+                <TextBlock Text="After signing in, copy the code the page shows and type it into the box at the bottom, then send it." TextWrapping="Wrap" Foreground="#C8D0CB" />
+                <Button x:Name="CloseLinkButton" Content="Close" HorizontalAlignment="Center" Click="CloseLink_Click" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </Page>

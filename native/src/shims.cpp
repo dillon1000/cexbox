@@ -369,6 +369,14 @@ BOOL WINAPI s_GetUserProfileDirectoryW(HANDLE, LPWSTR buf, LPDWORD size) {
 
 BOOL WINAPI s_GetUserNameW(LPWSTR buf, LPDWORD size) { return copy_with_size(L"xbox", buf, size); }
 
+// There's no browser to hand links to. Reporting failure makes Claude Code show
+// the sign-in link instead, which the app turns into a QR code.
+BOOL WINAPI s_ShellExecuteExW(void*) {
+    log("ShellExecuteExW: no browser here, so the program was told it failed");
+    SetLastError(ERROR_NO_ASSOCIATION);
+    return FALSE;
+}
+
 struct Override {
     const char* name;
     void* fn;
@@ -404,6 +412,7 @@ const Override kOverrides[] = {
     OVERRIDE(SHGetKnownFolderPath),
     OVERRIDE(GetUserProfileDirectoryW),
     OVERRIDE(GetUserNameW),
+    OVERRIDE(ShellExecuteExW),
 };
 #undef OVERRIDE
 
@@ -421,6 +430,7 @@ void shims_init() {
 }
 
 void* lookup_override(const char* name) {
+    if (void* c = console_override(name)) return c;
     for (const Override& o : kOverrides) {
         if (strcmp(o.name, name) == 0) return o.fn;
     }

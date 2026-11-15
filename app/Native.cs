@@ -17,8 +17,16 @@ namespace Cexbox
         [DllImport(Dll, CharSet = CharSet.Unicode)]
         public static extern int xb_setenv(string name, string value);
 
+        public const int FlagConsole = 1;
+
         [DllImport(Dll, CharSet = CharSet.Unicode)]
-        public static extern int xb_start(string exePath, string commandLine, string workDir, string logDir);
+        public static extern int xb_start(string exePath, string commandLine, string workDir, string logDir, int flags);
+
+        [DllImport(Dll)]
+        public static extern int xb_console_input(byte[] buffer, int length);
+
+        [DllImport(Dll)]
+        public static extern int xb_console_resize(int columns, int rows);
 
         [DllImport(Dll)]
         public static extern int xb_read_output(byte[] buffer, int capacity);

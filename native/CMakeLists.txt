@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.20)
 project(xbloader LANGUAGES CXX)
 
 add_library(xbloader SHARED
+    src/console.cpp
     src/host.cpp
     src/loader.cpp
     src/shims.cpp

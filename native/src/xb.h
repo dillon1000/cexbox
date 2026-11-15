@@ -33,6 +33,7 @@ extern Image g_image;
 
 // host.cpp
 void log(const char* fmt, ...);
+void output_write(const char* data, size_t n);  // program output for the app to show
 bool program_running();
 [[noreturn]] void process_exit(UINT code);
 void register_guest_thread(HANDLE thread);
@@ -60,6 +61,15 @@ bool stubs_finalize();
 // Returns code that calls trampoline(first argument, target). Used to give a
 // callback that takes one argument a second, hidden one.
 void* make_bound_thunk(void* target, void* trampoline);
+
+// console.cpp
+bool console_init();
+HANDLE console_stdin();
+HANDLE console_stdout();
+HANDLE console_stderr();
+void console_push_text(const char* utf8, size_t n);
+void console_resize(SHORT cols, SHORT rows);
+void* console_override(const char* name);
 
 // tls.cpp
 bool tls_init(Image& img, std::string& err);

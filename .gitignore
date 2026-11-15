@@ -6,5 +6,8 @@ app/Assets/
 app/*.user
 out/
 dist/
+tools/vtcheck/bin/
+tools/vtcheck/obj/
+*.bin
 .vs/
 xbox-claude-code.html
