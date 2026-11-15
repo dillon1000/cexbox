@@ -37,6 +37,12 @@ struct ThreadTls {
     bool owned = false;        // the thread belongs to the program
 };
 
+struct CountedString {
+    USHORT length;      // in bytes
+    USHORT max_length;
+    PWSTR buffer;
+};
+
 struct LdrEntry {
     LIST_ENTRY in_load_order;
     LIST_ENTRY in_memory_order;
@@ -44,8 +50,8 @@ struct LdrEntry {
     void* dll_base;
     void* entry_point;
     ULONG size_of_image;
-    UNICODE_STRING full_name;
-    UNICODE_STRING base_name;
+    CountedString full_name;
+    CountedString base_name;
 };
 
 // Logs which loaded module Windows gave TLS slot 0, and the highest slot in use.
@@ -68,8 +74,8 @@ void describe_loaded_tls() {
         if (!t->AddressOfIndex) continue;
         long idx = *reinterpret_cast<long*>(t->AddressOfIndex);
         if (idx > high) high = idx;
-        if (idx == 0 && le->base_name.Buffer) {
-            slot0 = narrow(std::wstring(le->base_name.Buffer, le->base_name.Length / sizeof(wchar_t)).c_str());
+        if (idx == 0 && le->base_name.buffer) {
+            slot0 = narrow(std::wstring(le->base_name.buffer, le->base_name.length / sizeof(wchar_t)).c_str());
         }
     }
     log("TLS: Windows uses %ld slots; slot 0 normally belongs to %s", high + 1, slot0.c_str());
