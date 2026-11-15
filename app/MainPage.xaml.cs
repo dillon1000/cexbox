@@ -50,6 +50,13 @@ namespace Cexbox
                 object focused = FocusManager.GetFocusedElement();
                 AppLog.Write($"window KeyDown {e.VirtualKey}, focus on {focused?.GetType().Name ?? "nothing"}" +
                              (focused is FrameworkElement fe && !string.IsNullOrEmpty(fe.Name) ? $" ({fe.Name})" : ""));
+                if (LinkOverlay.Visibility == Visibility.Visible &&
+                    (e.VirtualKey == VirtualKey.GamepadB || e.VirtualKey == VirtualKey.GamepadView || e.VirtualKey == VirtualKey.Escape))
+                {
+                    CloseLink_Click(this, null);
+                    e.Handled = true;
+                    return;
+                }
                 if (focused is TextBox && (e.VirtualKey == VirtualKey.Escape || e.VirtualKey == VirtualKey.GamepadB))
                 {
                     // Leave the text box and go back to the terminal.
@@ -379,7 +386,7 @@ namespace Cexbox
         void CloseLink_Click(object sender, RoutedEventArgs e)
         {
             LinkOverlay.Visibility = Visibility.Collapsed;
-            InputBox.Focus(FocusState.Programmatic);
+            Terminal.Focus(FocusState.Programmatic);
         }
 
         async void Restart_Click(object sender, RoutedEventArgs e)

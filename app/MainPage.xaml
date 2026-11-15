@@ -53,7 +53,7 @@
                 </Border>
                 <TextBlock x:Name="LinkText" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontFamily="Consolas" FontSize="12" Foreground="#9AA89E" />
                 <TextBlock Text="After signing in, copy the code the page shows and type it into the box at the bottom, then send it." TextWrapping="Wrap" Foreground="#C8D0CB" />
-                <Button x:Name="CloseLinkButton" Content="Close" HorizontalAlignment="Center" Click="CloseLink_Click" />
+                <Button x:Name="CloseLinkButton" Content="Close (A or B)" HorizontalAlignment="Center" Click="CloseLink_Click" />
             </StackPanel>
         </Grid>
     </Grid>
