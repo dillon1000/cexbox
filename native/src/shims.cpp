@@ -398,6 +398,7 @@ BOOL WINAPI s_GetUserNameW(LPWSTR buf, LPDWORD size) { return copy_with_size(L"x
 // Logs every program the loaded program tries to start and whether the Xbox allowed it.
 BOOL WINAPI s_CreateProcessW(LPCWSTR app, LPWSTR cmd, LPSECURITY_ATTRIBUTES psa, LPSECURITY_ATTRIBUTES tsa, BOOL inherit,
                              DWORD flags, LPVOID env, LPCWSTR cwd, LPSTARTUPINFOW si, LPPROCESS_INFORMATION pi) {
+    log("CreateProcessW starting: %s", cmd ? narrow(cmd).substr(0, 300).c_str() : (app ? narrow(app).c_str() : "-"));
     BOOL ok = CreateProcessW(app, cmd, psa, tsa, inherit, flags, env, cwd, si, pi);
     DWORD e = ok ? 0 : GetLastError();
     log("CreateProcessW(%s, %s) -> %s (error %lu)", app ? narrow(app).c_str() : "-",
