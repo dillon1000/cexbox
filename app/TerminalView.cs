@@ -1,4 +1,7 @@
 using System;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI;
 using Microsoft.Graphics.Canvas.UI.Xaml;
@@ -25,11 +28,16 @@ namespace Cexbox
         static readonly Color CursorColor = Color.FromArgb(255, 92, 201, 138);
         static readonly Color[] Palette = BuildPalette();
 
-        readonly CanvasControl _canvas = new CanvasControl();
+        CanvasControl _canvas;
+        CanvasRenderTarget _frame;     // the terminal, drawn off-screen first
+        bool _frameStale = true;
         CanvasTextFormat _regular, _bold;
         float _cellW = 8, _cellH = 16;
         bool _measured;
         char _pendingHigh;
+
+        int _framesDrawn, _frameErrors, _rebuilds;
+        DateTime _waitingSince = DateTime.MaxValue;  // when a redraw was requested and not yet drawn
 
         public VtTerminal Terminal { get; } = new VtTerminal(120, 40);
 
@@ -46,14 +54,13 @@ namespace Cexbox
         public event Action KeyboardRequested;
         public event Action LinkRequested;
 
+        public string DrawStats => $"{_framesDrawn} frames drawn, {_frameErrors} failed, {_rebuilds} surface rebuilds";
+
         public TerminalView()
         {
             IsTabStop = true;
             UseSystemFocusVisuals = false;
-            Content = _canvas;
-            _canvas.ClearColor = Background;
-            _canvas.CreateResources += OnCreateResources;
-            _canvas.Draw += OnDraw;
+            CreateCanvas();
             SizeChanged += (s, e) => UpdateGrid();
             PointerPressed += (s, e) => Focus(FocusState.Pointer);
             PointerWheelChanged += (s, e) =>
@@ -65,11 +72,46 @@ namespace Cexbox
             Unloaded += (s, e) => _canvas.RemoveFromVisualTree();
         }
 
+        void CreateCanvas()
+        {
+            if (_canvas != null)
+            {
+                _canvas.CreateResources -= OnCreateResources;
+                _canvas.Draw -= OnDraw;
+                _canvas.RemoveFromVisualTree();
+            }
+            _frame = null;
+            _canvas = new CanvasControl { ClearColor = Background };
+            _canvas.CreateResources += OnCreateResources;
+            _canvas.Draw += OnDraw;
+            Content = _canvas;
+        }
+
+        void RequestDraw()
+        {
+            _frameStale = true;
+            if (_waitingSince == DateTime.MaxValue) _waitingSince = DateTime.UtcNow;
+            _canvas.Invalidate();
+        }
+
+        // Called on every timer tick.
         public void Redraw()
         {
             if (Terminal.Dirty)
             {
                 Terminal.Dirty = false;
+                RequestDraw();
+            }
+
+            // If the surface was asked to draw and hasn't for two seconds, it has died
+            // (an error inside the graphics stack can do that). Replace it.
+            if (_waitingSince != DateTime.MaxValue && (DateTime.UtcNow - _waitingSince).TotalSeconds > 2 &&
+                Window.Current.Visible && ActualWidth > 0 && _rebuilds < 30)
+            {
+                _rebuilds++;
+                AppLog.Write($"the terminal surface stopped drawing; rebuilding it (time {_rebuilds})");
+                CreateCanvas();
+                _waitingSince = DateTime.UtcNow;
                 _canvas.Invalidate();
             }
         }
@@ -81,12 +123,40 @@ namespace Cexbox
             if (next != ScrollOffset)
             {
                 ScrollOffset = next;
-                _canvas.Invalidate();
+                RequestDraw();
+            }
+        }
+
+        // The screen as plain text, one line per row.
+        public string ScreenText()
+        {
+            var sb = new StringBuilder();
+            for (int y = 0; y < Terminal.Rows; y++)
+            {
+                Cell[] row = Terminal.ViewRow(y, ScrollOffset);
+                sb.Append(row == null ? "" : VtTerminal.RowText(row)).Append("\r\n");
+            }
+            return sb.ToString();
+        }
+
+        // Saves the last frame drawn as a PNG. Returns null on success or what went wrong.
+        public async Task<string> SaveScreenshotAsync(string path)
+        {
+            if (_frame == null) return "no frame has been drawn";
+            try
+            {
+                await _frame.SaveAsync(path, CanvasBitmapFileFormat.Png);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
             }
         }
 
         void OnCreateResources(CanvasControl sender, CanvasCreateResourcesEventArgs args)
         {
+            _frame = null;
             _regular = new CanvasTextFormat { FontFamily = FontFamily, FontSize = FontSize, WordWrapping = CanvasWordWrapping.NoWrap };
             _bold = new CanvasTextFormat { FontFamily = FontFamily, FontSize = FontSize, FontWeight = FontWeights.Bold, WordWrapping = CanvasWordWrapping.NoWrap };
             using (var layout = new CanvasTextLayout(sender, "MMMMMMMMMM", _regular, 10000, 10000))
@@ -107,29 +177,70 @@ namespace Cexbox
             Terminal.Resize(cols, rows);
             ScrollOffset = 0;
             GridResized?.Invoke(cols, rows);
-            _canvas.Invalidate();
+            RequestDraw();
         }
 
-        int _drawErrors;
-
+        // The terminal is painted into an off-screen image inside a try block, and the
+        // control only copies that image. Drawing errors surface when a drawing session
+        // ends; ending the control's own session with an error would kill the control.
         void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
         {
+            _waitingSince = DateTime.MaxValue;
+            _framesDrawn++;
+            if (!_measured) return;
             try
             {
-                Draw(args);
+                float w = (float)sender.ActualWidth, h = (float)sender.ActualHeight;
+                if (w < 1 || h < 1) return;
+                if (_frame == null || Math.Abs(_frame.Size.Width - w) > 0.5 || Math.Abs(_frame.Size.Height - h) > 0.5)
+                {
+                    _frame?.Dispose();
+                    _frame = new CanvasRenderTarget(sender, w, h);
+                    _frameStale = true;
+                }
+                if (_frameStale)
+                {
+                    _frameStale = false;
+                    using (CanvasDrawingSession ds = _frame.CreateDrawingSession())
+                    {
+                        ds.Clear(Background);
+                        Paint(ds);
+                    }
+                }
+                args.DrawingSession.DrawImage(_frame);
             }
             catch (Exception ex)
             {
-                if (++_drawErrors <= 5) AppLog.Write("drawing failed: " + ex);
+                _frame = null;
+                if (++_frameErrors <= 10)
+                {
+                    AppLog.Write($"drawing a frame failed (0x{ex.HResult:X8}): {ex.Message}; characters on screen: {SpecialCharacters()}");
+                }
             }
         }
 
-        void Draw(CanvasDrawEventArgs args)
+        // The distinct non-ASCII characters on screen, for the log.
+        string SpecialCharacters()
         {
-            if (!_measured) return;
-            var ds = args.DrawingSession;
+            var seen = new System.Collections.Generic.SortedSet<int>();
+            for (int y = 0; y < Terminal.Rows; y++)
+            {
+                Cell[] row = Terminal.ViewRow(y, ScrollOffset);
+                if (row == null) continue;
+                foreach (Cell c in row)
+                {
+                    if (c.Ch >= 128 && seen.Count < 60) seen.Add(c.Ch);
+                }
+            }
+            var sb = new StringBuilder();
+            foreach (int cp in seen) sb.Append($"U+{cp:X4} ");
+            return sb.ToString();
+        }
+
+        void Paint(CanvasDrawingSession ds)
+        {
             VtTerminal t = Terminal;
-            var text = new System.Text.StringBuilder();
+            var text = new StringBuilder();
 
             for (int y = 0; y < t.Rows; y++)
             {
@@ -149,7 +260,8 @@ namespace Cexbox
                 }
 
                 // Text. Plain ASCII runs are drawn together; anything else is drawn one
-                // character at a time at its own cell, so fallback fonts can't shift the grid.
+                // character at a time at its own cell, and only with characters the
+                // bundled font has, so Windows never needs a fallback font.
                 for (int x = 0; x < cols;)
                 {
                     Cell c = row[x];
@@ -160,11 +272,11 @@ namespace Cexbox
                     }
                     Color fg = ForeColor(c);
                     bool bold = (c.Attr & CellAttr.Bold) != 0;
-                    if (c.Ch < 128)
+                    if (c.Ch < 127)
                     {
                         text.Clear();
                         int end = x;
-                        while (end < cols && row[end].Ch > 32 && row[end].Ch < 128 &&
+                        while (end < cols && row[end].Ch > 32 && row[end].Ch < 127 &&
                                ForeColor(row[end]) == fg && ((row[end].Attr & CellAttr.Bold) != 0) == bold)
                         {
                             text.Append((char)row[end].Ch);
@@ -176,7 +288,7 @@ namespace Cexbox
                     }
                     else
                     {
-                        ds.DrawText(char.ConvertFromUtf32(c.Ch), x * _cellW, top, fg, bold ? _bold : _regular);
+                        ds.DrawText(char.ConvertFromUtf32(FontCoverage.Resolve(c.Ch)), x * _cellW, top, fg, bold ? _bold : _regular);
                         if ((c.Attr & CellAttr.Underline) != 0) ds.DrawLine(x * _cellW, top + _cellH - 1, (x + 1) * _cellW, top + _cellH - 1, fg);
                         x++;
                     }
@@ -239,7 +351,7 @@ namespace Cexbox
             if (ScrollOffset != 0)
             {
                 ScrollOffset = 0;
-                _canvas.Invalidate();
+                RequestDraw();
             }
             AppLog.Write($"terminal sends \"{AppLog.Visible(s)}\"");
             Input?.Invoke(s);

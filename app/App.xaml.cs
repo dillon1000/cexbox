@@ -16,7 +16,7 @@ namespace Cexbox
             // Log anything that would otherwise close the app without a trace, and keep going.
             UnhandledException += (s, e) =>
             {
-                AppLog.Write("unhandled exception: " + e.Exception);
+                AppLog.Write($"unhandled exception (0x{e.Exception.HResult:X8}): {e.Exception}");
                 e.Handled = true;
             };
             System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (s, e) =>

@@ -52,6 +52,8 @@
     </Compile>
     <Compile Include="AppLog.cs" />
     <Compile Include="ClaudeDownloader.cs" />
+    <Compile Include="FontCoverage.cs" />
+    <Compile Include="FontSubstitutes.cs" />
     <Compile Include="Native.cs" />
     <Compile Include="TerminalView.cs" />
     <Compile Include="VtTerminal.cs" />

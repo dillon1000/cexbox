@@ -288,14 +288,37 @@ namespace Cexbox
             SendToProgram(sb.ToString());
         }
 
+        // For testing from a PC: when LocalState\screenshot.txt appears, the terminal's
+        // text and last drawn frame are saved to LocalState\logs.
+        async void CheckScreenshotRequest()
+        {
+            string request = Path.Combine(_root, "screenshot.txt");
+            if (!File.Exists(request)) return;
+            try
+            {
+                File.Delete(request);
+                File.WriteAllText(Path.Combine(LogDir, "screen.txt"), Terminal.ScreenText());
+                string problem = await Terminal.SaveScreenshotAsync(Path.Combine(LogDir, "screen.png"));
+                AppLog.Write(problem == null ? "screenshot saved" : "screenshot failed: " + problem);
+            }
+            catch (IOException ex)
+            {
+                AppLog.Write("screenshot failed: " + ex.Message);
+            }
+        }
+
         void Pump()
         {
-            if (++_pumps % 30 == 0) CheckRemoteInput();
+            if (++_pumps % 30 == 0)
+            {
+                CheckRemoteInput();
+                CheckScreenshotRequest();
+            }
             if (_pumps % 300 == 0)
             {
                 CoreWindow w = Window.Current.CoreWindow;
                 AppLog.Write($"window state: activation {w.ActivationMode}, visible {w.Visible}, " +
-                             $"focus on {FocusManager.GetFocusedElement()?.GetType().Name ?? "nothing"}");
+                             $"focus on {FocusManager.GetFocusedElement()?.GetType().Name ?? "nothing"}; {Terminal.DrawStats}");
             }
             if (_running)
             {

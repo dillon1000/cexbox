@@ -7,7 +7,8 @@
 #   tools/xbox.sh input '\e[B\r'           send keystrokes (escapes: \e \r \n \t \xNN)
 #   tools/xbox.sh stop                     close the app
 #   tools/xbox.sh logs [dir]               download loader.log and output.log
-#   tools/xbox.sh screenshot [file.png]    save what's on screen
+#   tools/xbox.sh shot [dir]               save the app's terminal as screen.txt and screen.png
+#   tools/xbox.sh screenshot [file.png]    save what's on screen (fails while the app is in front)
 set -euo pipefail
 
 XBOX="${XBOX:-192.168.2.3}"
@@ -89,6 +90,23 @@ logs)
             --data-urlencode "filename=$f" --data-urlencode 'path=\LocalState\logs' -o "$dir/$f"
     done
     echo "saved to $dir"
+    ;;
+shot)
+    # Asks the app to save its terminal (text and image), then downloads both.
+    dir="${2:-dist/xbox-logs}"
+    mkdir -p "$dir"
+    pkg="$(package_name)"
+    token="$(csrf)"
+    printf 'now' > /tmp/screenshot.txt
+    curl -sk -b "$JAR" -H "X-CSRF-Token: $token" -F "file=@/tmp/screenshot.txt;filename=screenshot.txt" \
+        "$BASE/api/filesystem/apps/file?knownfolderid=LocalAppData&packagefullname=$pkg&path=%5CLocalState" -o /dev/null
+    sleep 3
+    for f in screen.txt screen.png; do
+        curl -sk -G "$BASE/api/filesystem/apps/file" \
+            --data-urlencode "knownfolderid=LocalAppData" --data-urlencode "packagefullname=$pkg" \
+            --data-urlencode "filename=$f" --data-urlencode 'path=\LocalState\logs' -o "$dir/$f"
+    done
+    echo "saved $dir/screen.txt and $dir/screen.png"
     ;;
 screenshot)
     out="${2:-dist/xbox-screen.png}"
