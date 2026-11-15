@@ -195,6 +195,8 @@ namespace Cexbox
             Native.xb_setenv("TEMP", temp);
             Native.xb_setenv("TMP", temp);
             Native.xb_setenv("DISABLE_AUTOUPDATER", "1");
+            // There's no PowerShell on Xbox, so Claude Code shouldn't offer that tool.
+            Native.xb_setenv("CLAUDE_CODE_USE_POWERSHELL_TOOL", "0");
 
             // Claude Code needs a bash for its Bash tool; busybox provides one.
             string bin = Path.Combine(_root, "bin");

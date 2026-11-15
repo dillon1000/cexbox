@@ -4,6 +4,7 @@
 #include "xb.h"
 
 #include <string.h>
+#include <wctype.h>
 
 namespace xb {
 
@@ -396,13 +397,65 @@ BOOL WINAPI s_GetUserProfileDirectoryW(HANDLE, LPWSTR buf, LPDWORD size) {
 BOOL WINAPI s_GetUserNameW(LPWSTR buf, LPDWORD size) { return copy_with_size(L"xbox", buf, size); }
 
 // Logs every program the loaded program tries to start and whether the Xbox allowed it.
+bool path_delimiter(wchar_t c) {
+    return c == L' ' || c == L'\t' || c == L'\n' || c == L'\'' || c == L'"' || c == L'=' || c == L'(' || c == L')' ||
+           c == L'<' || c == L'>' || c == L'|' || c == L';' || c == L'&' || c == L'`' || c == L':';
+}
+
+// Claude Code writes paths for Git Bash, as /c/Users/..., but the shell here is
+// busybox, which only knows C:/Users/.... This rewrites /x/name to X:/name wherever
+// it starts a word and X:\name really exists, so text such as sed's /a/b/ is left alone.
+std::wstring translate_git_bash_paths(const std::wstring& cmd) {
+    std::wstring out;
+    out.reserve(cmd.size());
+    size_t n = cmd.size();
+    for (size_t i = 0; i < n; ++i) {
+        wchar_t c = cmd[i];
+        bool candidate = c == L'/' && i + 3 < n && cmd[i + 2] == L'/' &&
+                         ((cmd[i + 1] >= L'a' && cmd[i + 1] <= L'z') || (cmd[i + 1] >= L'A' && cmd[i + 1] <= L'Z')) &&
+                         (i == 0 || path_delimiter(cmd[i - 1]));
+        if (candidate) {
+            size_t end = i + 3;
+            while (end < n && cmd[end] != L'/' && cmd[end] != L'\\' && !path_delimiter(cmd[end])) ++end;
+            wchar_t drive = static_cast<wchar_t>(towupper(cmd[i + 1]));
+            std::wstring first = std::wstring(1, drive) + L":\\" + cmd.substr(i + 3, end - (i + 3));
+            if (end > i + 3 && GetFileAttributesW(first.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                out += drive;
+                out += L":/";
+                i += 2;
+                continue;
+            }
+        }
+        out += c;
+    }
+    return out;
+}
+
+bool is_shell(LPCWSTR app, LPCWSTR cmd) {
+    std::wstring s = app ? app : (cmd ? cmd : L"");
+    if (!app && !s.empty()) {
+        // The program is the first word of the command line, possibly quoted.
+        size_t end = s[0] == L'"' ? s.find(L'"', 1) : s.find(L' ');
+        s = s.substr(s[0] == L'"' ? 1 : 0, end == std::wstring::npos ? end : end - (s[0] == L'"' ? 1 : 0));
+    }
+    size_t slash = s.find_last_of(L"\\/");
+    std::wstring name = slash == std::wstring::npos ? s : s.substr(slash + 1);
+    return _wcsicmp(name.c_str(), L"bash.exe") == 0 || _wcsicmp(name.c_str(), L"sh.exe") == 0;
+}
+
+// Starts a real child process: the Xbox allows that from an app. Shell commands get
+// their paths translated for busybox first.
 BOOL WINAPI s_CreateProcessW(LPCWSTR app, LPWSTR cmd, LPSECURITY_ATTRIBUTES psa, LPSECURITY_ATTRIBUTES tsa, BOOL inherit,
                              DWORD flags, LPVOID env, LPCWSTR cwd, LPSTARTUPINFOW si, LPPROCESS_INFORMATION pi) {
-    log("CreateProcessW starting: %s", cmd ? narrow(cmd).substr(0, 300).c_str() : (app ? narrow(app).c_str() : "-"));
-    BOOL ok = CreateProcessW(app, cmd, psa, tsa, inherit, flags, env, cwd, si, pi);
+    std::wstring line = cmd ? cmd : L"";
+    if (cmd && is_shell(app, cmd)) line = translate_git_bash_paths(line);
+    BOOL ok = CreateProcessW(app, cmd ? &line[0] : nullptr, psa, tsa, inherit, flags, env, cwd, si, pi);
     DWORD e = ok ? 0 : GetLastError();
-    log("CreateProcessW(%s, %s) -> %s (error %lu)", app ? narrow(app).c_str() : "-",
-        cmd ? narrow(cmd).substr(0, 300).c_str() : "-", ok ? "started" : "failed", e);
+    static volatile LONG calls = 0;
+    if (!ok || InterlockedIncrement(&calls) <= 200) {
+        log("CreateProcessW %s (error %lu): %s", ok ? "started" : "failed", e,
+            cmd ? narrow(line.c_str()).substr(0, 1500).c_str() : (app ? narrow(app).c_str() : "-"));
+    }
     if (!ok) SetLastError(e);
     return ok;
 }
