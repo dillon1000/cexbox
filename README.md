@@ -6,12 +6,12 @@ Because the program running is Anthropic's own Claude Code, you sign in with you
 
 ## Status
 
-Milestone 1, untested on hardware. The goal is to show the output of `claude --version`. If that works, the hard parts work: mapping the image, thread-local storage, executable memory for the JavaScript engine, and file access.
+Milestone 2 is built but not yet tested on an Xbox. Milestone 1's loader is also still untested on hardware, so the first run will show whether the hard parts work: mapping the image, thread-local storage, executable memory for the JavaScript engine, and file access.
 
 | Milestone | What works |
 | --- | --- |
-| 1 | `claude --version` and other one-shot commands, output shown as plain text |
-| 2 | Interactive Claude Code in a real terminal (xterm.js), keyboard input, sign-in |
+| 1 | Loading `claude.exe` and running one-shot commands such as `--version` |
+| 2 | Interactive Claude Code in a terminal, keyboard and controller input, sign-in by QR code |
 | 3 | The Bash tool, by running a native Windows shell (busybox-w32) through the same loader |
 | 4 | `git.exe` and `node.exe`/npm through the loader, a folder on a USB drive as your projects |
 | 5 | Remote access: SSH or Tailscale into the Xbox |
@@ -21,14 +21,22 @@ Milestone 1, untested on hardware. The goal is to show the output of `claude --v
 ```
 Cexbox.exe (C# Xbox app)
  ├─ downloads claude.exe from downloads.claude.ai into LocalState\claude
- ├─ shows output, sends input
+ ├─ VtTerminal: an xterm-compatible screen, drawn with Win2D by TerminalView
+ ├─ keyboard and controller input, sign-in link as a QR code
  └─ xbloader.dll (C++)
      ├─ maps claude.exe: sections, relocations, imports, delay imports
      ├─ registers its unwind table so exceptions work
      ├─ gives every thread a copy of claude.exe's static TLS
+     ├─ a virtual console, so claude.exe sees a real terminal
      ├─ replaces functions that must act differently in an app (memory, modules, exit, threads)
      └─ generates stubs for functions the Xbox doesn't have at all
 ```
+
+### The virtual console
+
+Claude Code's interactive interface only starts when stdin and stdout are a console. Xbox apps don't have one, so `native/src/console.cpp` makes three event objects, gives them to `claude.exe` as its standard handles, and answers every console call made on them: modes, screen size, `ReadConsoleInputW`, `WriteConsoleW`, `WriteFile` and so on. The handles are real event objects because libuv waits on stdin to learn when input is ready. Copies made with `DuplicateHandle` are tracked too, since libuv duplicates stdin.
+
+Output goes to the app's terminal emulator, `app/VtTerminal.cs`. Keystrokes come back as console key events carrying the characters a terminal would send, escape sequences included. `tools/vtcheck` replays recorded terminal output through the emulator and prints the resulting screen. Claude Code's trust prompt and main screen render correctly in it.
 
 Every import is resolved in this order:
 
@@ -65,9 +73,32 @@ Download the `cexbox-package` artifact from the workflow run.
 2. Under My games & apps, choose Add and pick `Cexbox_0.1.0.0_x64.msix` from the artifact.
 3. Add the `.appx` files from the artifact's `Dependencies\x64` folder as dependencies, then install.
 4. In Dev Home, select Cexbox, press View details and set App type to **Game** for more memory.
-5. Open Cexbox, press Download Claude Code, then Run.
+5. Open Cexbox, press Download Claude Code, then Start Claude Code.
 
-Each launch can run the program once. Press Restart app to run it again.
+Each launch can run Claude Code once. Press Restart app to run it again.
+
+## Using it
+
+A USB keyboard works like it does in any terminal. With a controller:
+
+| Button | Does |
+| --- | --- |
+| D-pad, left stick | Arrow keys |
+| A | Enter |
+| B | Esc |
+| Y | Opens the text box at the bottom for the on-screen keyboard |
+| View | Shows the sign-in link as a QR code |
+| Menu | Ctrl+C |
+| LB / RB | Scroll back and forward through history |
+
+Shift+PageUp and Shift+PageDown also scroll.
+
+### Signing in
+
+1. Start Claude Code and choose to sign in with your Claude account (or run `/login`).
+2. Claude Code can't open a browser on the Xbox, so it shows a link. Press the View button or the Sign-in link button to see it as a QR code.
+3. Scan it with your phone and sign in there.
+4. The page then shows a code. Type it into the text box at the bottom of the app and press Send.
 
 ## Logs
 

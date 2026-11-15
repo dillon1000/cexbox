@@ -3,6 +3,7 @@ name: Build Xbox package
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "tools/**"]
   workflow_dispatch:
 
 jobs:
