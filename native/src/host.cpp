@@ -339,6 +339,7 @@ extern "C" XB_API int __stdcall xb_start(const wchar_t* exe_path, const wchar_t*
     if (work_dir && *work_dir && !SetCurrentDirectoryW(work_dir)) {
         log("could not change folder to %s: error %lu", narrow(work_dir).c_str(), GetLastError());
     }
+    if (work_dir && *work_dir) set_guest_cwd(work_dir);
 
     shims_init();
 

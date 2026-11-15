@@ -397,6 +397,37 @@ BOOL WINAPI s_GetUserProfileDirectoryW(HANDLE, LPWSTR buf, LPDWORD size) {
 BOOL WINAPI s_GetUserNameW(LPWSTR buf, LPDWORD size) { return copy_with_size(L"xbox", buf, size); }
 
 // Logs every program the loaded program tries to start and whether the Xbox allowed it.
+// ---- Working folder --------------------------------------------------------------
+// The app resets the process's working folder behind the program's back, so the
+// program's own working folder is remembered here, reported back to it, and used
+// for every child process it starts.
+
+SRWLOCK g_cwd_lock = SRWLOCK_INIT;
+std::wstring g_guest_cwd;
+
+std::wstring guest_cwd_copy() {
+    AcquireSRWLockShared(&g_cwd_lock);
+    std::wstring copy = g_guest_cwd;
+    ReleaseSRWLockShared(&g_cwd_lock);
+    return copy;
+}
+
+BOOL WINAPI s_SetCurrentDirectoryW(LPCWSTR path) {
+    if (!SetCurrentDirectoryW(path)) return FALSE;
+    wchar_t full[MAX_PATH * 2];
+    DWORD n = GetCurrentDirectoryW(ARRAYSIZE(full), full);
+    if (n && n < ARRAYSIZE(full)) set_guest_cwd(full);
+    return TRUE;
+}
+
+DWORD WINAPI s_GetCurrentDirectoryW(DWORD size, LPWSTR buf) {
+    std::wstring cwd = guest_cwd_copy();
+    if (cwd.empty()) return GetCurrentDirectoryW(size, buf);
+    if (!buf || size < cwd.size() + 1) return static_cast<DWORD>(cwd.size() + 1);
+    memcpy(buf, cwd.c_str(), (cwd.size() + 1) * sizeof(wchar_t));
+    return static_cast<DWORD>(cwd.size());
+}
+
 bool path_delimiter(wchar_t c) {
     return c == L' ' || c == L'\t' || c == L'\n' || c == L'\'' || c == L'"' || c == L'=' || c == L'(' || c == L')' ||
            c == L'<' || c == L'>' || c == L'|' || c == L';' || c == L'&' || c == L'`' || c == L':';
@@ -476,11 +507,14 @@ BOOL WINAPI s_CreateProcessW(LPCWSTR app, LPWSTR cmd, LPSECURITY_ATTRIBUTES psa,
                              DWORD flags, LPVOID env, LPCWSTR cwd, LPSTARTUPINFOW si, LPPROCESS_INFORMATION pi) {
     std::wstring line = cmd ? cmd : L"";
     if (cmd && is_shell(app, cmd)) line = translate_git_bash_paths(drop_snapshot_source(line));
-    BOOL ok = CreateProcessW(app, cmd ? &line[0] : nullptr, psa, tsa, inherit, flags, env, cwd, si, pi);
+    std::wstring folder = cwd ? cwd : guest_cwd_copy();
+    BOOL ok = CreateProcessW(app, cmd ? &line[0] : nullptr, psa, tsa, inherit, flags, env,
+                             folder.empty() ? nullptr : folder.c_str(), si, pi);
     DWORD e = ok ? 0 : GetLastError();
     static volatile LONG calls = 0;
     if (!ok || InterlockedIncrement(&calls) <= 200) {
-        log("CreateProcessW %s (error %lu): %s", ok ? "started" : "failed", e,
+        log("CreateProcessW %s (error %lu) in %s%s: %s", ok ? "started" : "failed", e, narrow(folder.c_str()).c_str(),
+            cwd ? "" : " (the program gave no folder)",
             cmd ? narrow(line.c_str()).substr(0, 1500).c_str() : (app ? narrow(app).c_str() : "-"));
     }
     if (!ok) SetLastError(e);
@@ -533,6 +567,8 @@ const Override kOverrides[] = {
     OVERRIDE(GetUserNameW),
     OVERRIDE(ShellExecuteExW),
     OVERRIDE(CreateProcessW),
+    OVERRIDE(SetCurrentDirectoryW),
+    OVERRIDE(GetCurrentDirectoryW),
 };
 #undef OVERRIDE
 
@@ -547,6 +583,12 @@ void shims_init() {
     real_RtlPcToFileHeader =
         reinterpret_cast<RtlPcToFileHeader_fn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlPcToFileHeader"));
     log("LoadLibraryExW: %s", real_LoadLibraryExW ? "available" : "missing, only app package DLLs can load");
+}
+
+void set_guest_cwd(const wchar_t* path) {
+    AcquireSRWLockExclusive(&g_cwd_lock);
+    g_guest_cwd = path ? path : L"";
+    ReleaseSRWLockExclusive(&g_cwd_lock);
 }
 
 void* lookup_override(const char* name) {

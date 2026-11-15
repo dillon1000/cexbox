@@ -50,6 +50,7 @@ bool in_guest(const void* p);
 
 // shims.cpp
 void shims_init();
+void set_guest_cwd(const wchar_t* path);  // the program's working folder
 void* lookup_override(const char* name);
 
 using LoadLibraryExW_fn = HMODULE(WINAPI*)(LPCWSTR, HANDLE, DWORD);
