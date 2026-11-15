@@ -1,0 +1,39 @@
+<Page
+    x:Class="Cexbox.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+
+    <Grid Padding="48,27,48,27" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Claude Code on Xbox" Style="{StaticResource SubtitleTextBlockStyle}" />
+        <TextBlock x:Name="StatusText" Grid.Row="1" TextWrapping="Wrap" />
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
+            <Button x:Name="DownloadButton" Content="Download Claude Code" Click="Download_Click" />
+            <TextBox x:Name="ArgsBox" Text="--version" Width="420" PlaceholderText="Arguments" />
+            <Button x:Name="RunButton" Content="Run" Click="Run_Click" IsEnabled="False" />
+            <Button x:Name="RestartButton" Content="Restart app" Click="Restart_Click" Visibility="Collapsed" />
+        </StackPanel>
+
+        <ProgressBar x:Name="Progress" Grid.Row="3" Maximum="1" Visibility="Collapsed" />
+
+        <ScrollViewer x:Name="OutputScroll" Grid.Row="4" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                      Background="{ThemeResource SystemControlBackgroundAltHighBrush}" Padding="12">
+            <TextBlock x:Name="OutputText" FontFamily="Consolas" FontSize="14" IsTextSelectionEnabled="True" />
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="12">
+            <TextBox x:Name="InputBox" Width="600" PlaceholderText="Type a line to send to the program" />
+            <Button x:Name="SendButton" Content="Send" Click="Send_Click" IsEnabled="False" />
+        </StackPanel>
+    </Grid>
+</Page>

@@ -1,0 +1,8 @@
+native/build/
+app/bin/
+app/obj/
+app/xbloader.dll
+app/Assets/
+app/*.user
+out/
+.vs/
