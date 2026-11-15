@@ -153,6 +153,47 @@ LONG CALLBACK log_crashes(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Logs where every program thread is, to diagnose hangs. Each thread is paused only
+// long enough to read its registers; the stacks are walked after all are running again.
+void log_thread_stacks(const char* why) {
+    struct Snapshot {
+        DWORD id;
+        CONTEXT ctx;
+    };
+    std::vector<Snapshot> snaps;
+    DWORD self = GetCurrentThreadId();
+    EnterCriticalSection(&g_thread_lock);
+    std::vector<HANDLE> threads = g_threads;
+    LeaveCriticalSection(&g_thread_lock);
+    for (HANDLE h : threads) {
+        DWORD id = GetThreadId(h);
+        if (!id || id == self) continue;
+        if (SuspendThread(h) == static_cast<DWORD>(-1)) continue;
+        Snapshot s{};
+        s.id = id;
+        s.ctx.ContextFlags = CONTEXT_FULL;
+        BOOL ok = GetThreadContext(h, &s.ctx);
+        ResumeThread(h);
+        if (ok) snaps.push_back(s);
+    }
+    log("%s: %zu program threads", why, snaps.size());
+    for (const Snapshot& s : snaps) {
+        log("  thread %lu:", s.id);
+        log_stack(&s.ctx);
+    }
+}
+
+DWORD WINAPI watchdog(void*) {
+    for (int i = 1; i <= 2; ++i) {
+        Sleep(15000);
+        if (g_state != XB_RUNNING) return 0;
+        char why[64];
+        snprintf(why, sizeof why, "where the program is after %d seconds", 15 * i);
+        log_thread_stacks(why);
+    }
+    return 0;
+}
+
 DWORD WINAPI guest_main(void*) {
     tls_ensure_thread();
     tls_run_callbacks(DLL_PROCESS_ATTACH);
@@ -339,6 +380,8 @@ extern "C" XB_API int __stdcall xb_start(const wchar_t* exe_path, const wchar_t*
     register_guest_thread(main_thread);
     CloseHandle(main_thread);
     log("main thread started with a %zu byte stack", stack);
+    HANDLE dog = CreateThread(nullptr, 0, watchdog, nullptr, 0, nullptr);
+    if (dog) CloseHandle(dog);
     return 0;
 }
 
