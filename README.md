@@ -6,15 +6,29 @@ Because the program running is Anthropic's own Claude Code, you sign in with you
 
 ## Status
 
-Milestone 2 is built but not yet tested on an Xbox. Milestone 1's loader is also still untested on hardware, so the first run will show whether the hard parts work: mapping the image, thread-local storage, executable memory for the JavaScript engine, and file access.
+Milestones 1 to 3 work on a real Xbox Series console (15 November 2026, Claude Code 2.1.325): Claude Code loads, runs interactively, signs in with a Claude subscription, chats, and runs shell commands through its Bash tool.
 
-| Milestone | What works |
-| --- | --- |
-| 1 | Loading `claude.exe` and running one-shot commands such as `--version` |
-| 2 | Interactive Claude Code in a terminal, keyboard and controller input, sign-in by QR code |
-| 3 | The Bash tool, by running a native Windows shell (busybox-w32) through the same loader |
-| 4 | `git.exe` and `node.exe`/npm through the loader, a folder on a USB drive as your projects |
-| 5 | Remote access: SSH or Tailscale into the Xbox |
+| Milestone | State | What it covers |
+| --- | --- | --- |
+| 1 | Works | Loading `claude.exe` and running it |
+| 2 | Works | Interactive Claude Code in a terminal, keyboard and controller input, sign-in by QR code |
+| 3 | Works, one fix untested | The Bash tool, with busybox-w32 as `bash.exe`. The fix that starts each command in the working folder is built but not yet tried on the console. |
+| 4 | Not started | `git.exe` and `node.exe`/npm, a folder on a USB drive as your projects |
+| 5 | Not started | Remote access: SSH or Tailscale into the Xbox |
+
+### What the Xbox turned out to allow
+
+- **Real child processes.** `CreateProcessW` works from the app, for system programs (`reg.exe`) and for programs in the app's own storage (busybox). So programs Claude Code starts run as ordinary processes; only `claude.exe` itself goes through the loader, because it needs the virtual console.
+- **Every import.** All 621 functions `claude.exe` imports exist on the console, so no stubs are generated in practice.
+- **Child processes start in the app's install folder**, whatever folder `CreateProcess` is given. The loader puts a `cd` in front of shell commands to fix that.
+
+### What needed fixing on the console
+
+- **Thread-local storage.** Compilers hard-code TLS slot 0 for an `.exe`, and in the app that slot belongs to `KERNELBASE.dll`. The loader rewrites every `mov reg, gs:[0x58]` in `claude.exe` (9,442 of them) to read a TEB slot it owns. See `native/src/tls.cpp`.
+- **Winsock 1 ordinals.** `wsock32` numbers `inet_addr`, `inet_ntoa` and `ioctlsocket` differently from `ws2_32`. Forwarding by ordinal left every socket blocking and hung startup. See `native/src/net.cpp`.
+- **Mouse mode.** Xbox apps start with the controller driving a cursor. The app opts out so the D-pad sends keys.
+- **Drawing errors.** Some frames fail with "invalid cross-partition private file/section access" (0x8007067D) when new glyphs are first drawn. The terminal is painted off-screen, failed calls are retried one at a time, and the result is always shown. The root cause isn't understood yet.
+- **Git Bash paths and the shell snapshot.** Claude Code writes `/q/Users/...` paths and sources a bash-only snapshot file; busybox needs `Q:/Users/...` and can't parse the snapshot. The loader rewrites shell command lines. See `s_CreateProcessW` in `native/src/shims.cpp`.
 
 ## How it works
 

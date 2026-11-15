@@ -489,6 +489,21 @@ std::wstring translate_git_bash_paths(const std::wstring& cmd) {
     return out;
 }
 
+// The Xbox starts an app's child processes in the app's install folder, whatever
+// folder CreateProcess is given. A shell can fix that itself, so its command gets a
+// "cd" to the intended folder in front. Subshells and pipes then keep that folder.
+std::wstring enter_folder(const std::wstring& cmd, const std::wstring& folder) {
+    static const std::wstring flag = L" -c \"";
+    size_t at = cmd.find(flag);
+    if (at == std::wstring::npos || folder.empty() || folder.find(L'\'') != std::wstring::npos) return cmd;
+    std::wstring target = folder;
+    for (wchar_t& c : target) {
+        if (c == L'\\') c = L'/';
+    }
+    size_t body = at + flag.size();
+    return cmd.substr(0, body) + L"cd '" + target + L"' 2>/dev/null; " + cmd.substr(body);
+}
+
 bool is_shell(LPCWSTR app, LPCWSTR cmd) {
     std::wstring s = app ? app : (cmd ? cmd : L"");
     if (!app && !s.empty()) {
@@ -506,8 +521,8 @@ bool is_shell(LPCWSTR app, LPCWSTR cmd) {
 BOOL WINAPI s_CreateProcessW(LPCWSTR app, LPWSTR cmd, LPSECURITY_ATTRIBUTES psa, LPSECURITY_ATTRIBUTES tsa, BOOL inherit,
                              DWORD flags, LPVOID env, LPCWSTR cwd, LPSTARTUPINFOW si, LPPROCESS_INFORMATION pi) {
     std::wstring line = cmd ? cmd : L"";
-    if (cmd && is_shell(app, cmd)) line = translate_git_bash_paths(drop_snapshot_source(line));
     std::wstring folder = cwd ? cwd : guest_cwd_copy();
+    if (cmd && is_shell(app, cmd)) line = enter_folder(translate_git_bash_paths(drop_snapshot_source(line)), folder);
     BOOL ok = CreateProcessW(app, cmd ? &line[0] : nullptr, psa, tsa, inherit, flags, env,
                              folder.empty() ? nullptr : folder.c_str(), si, pi);
     DWORD e = ok ? 0 : GetLastError();
