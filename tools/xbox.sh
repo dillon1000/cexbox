@@ -61,7 +61,7 @@ run)
         -w "autostart: http %{http_code}\n" -o /dev/null
     curl -sk -b "$JAR" -H "X-CSRF-Token: $token" -X DELETE "$BASE/api/taskmanager/app?package=$(b64 "$pkg")" -o /dev/null || true
     sleep 2
-    curl -sk -b "$JAR" -H "X-CSRF-Token: $token" -X POST \
+    curl -sk -b "$JAR" -H "X-CSRF-Token: $token" -X POST --data "" \
         "$BASE/api/taskmanager/app?appid=$(b64 "$(app_id)")&package=$(b64 "$pkg")" -w "launch: http %{http_code}\n" -o /dev/null
     ;;
 stop)

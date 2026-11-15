@@ -375,6 +375,17 @@ BOOL WINAPI s_GetUserProfileDirectoryW(HANDLE, LPWSTR buf, LPDWORD size) {
 
 BOOL WINAPI s_GetUserNameW(LPWSTR buf, LPDWORD size) { return copy_with_size(L"xbox", buf, size); }
 
+// Logs every program the loaded program tries to start and whether the Xbox allowed it.
+BOOL WINAPI s_CreateProcessW(LPCWSTR app, LPWSTR cmd, LPSECURITY_ATTRIBUTES psa, LPSECURITY_ATTRIBUTES tsa, BOOL inherit,
+                             DWORD flags, LPVOID env, LPCWSTR cwd, LPSTARTUPINFOW si, LPPROCESS_INFORMATION pi) {
+    BOOL ok = CreateProcessW(app, cmd, psa, tsa, inherit, flags, env, cwd, si, pi);
+    DWORD e = ok ? 0 : GetLastError();
+    log("CreateProcessW(%s, %s) -> %s (error %lu)", app ? narrow(app).c_str() : "-",
+        cmd ? narrow(cmd).substr(0, 300).c_str() : "-", ok ? "started" : "failed", e);
+    if (!ok) SetLastError(e);
+    return ok;
+}
+
 // There's no browser to hand links to. Reporting failure makes Claude Code show
 // the sign-in link instead, which the app turns into a QR code.
 BOOL WINAPI s_ShellExecuteExW(void*) {
@@ -419,6 +430,7 @@ const Override kOverrides[] = {
     OVERRIDE(GetUserProfileDirectoryW),
     OVERRIDE(GetUserNameW),
     OVERRIDE(ShellExecuteExW),
+    OVERRIDE(CreateProcessW),
 };
 #undef OVERRIDE
 

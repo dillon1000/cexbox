@@ -142,6 +142,27 @@ namespace Cexbox
             Native.xb_setenv("TEMP", temp);
             Native.xb_setenv("TMP", temp);
             Native.xb_setenv("DISABLE_AUTOUPDATER", "1");
+
+            // Claude Code needs a bash for its Bash tool; busybox provides one.
+            string bin = Path.Combine(_root, "bin");
+            string bash = Path.Combine(bin, "bash.exe");
+            if (!File.Exists(bash))
+            {
+                StatusText.Text = "Downloading the shell Claude Code uses (busybox)…";
+                try
+                {
+                    await ClaudeDownloader.DownloadBusyboxAsync(bin);
+                }
+                catch (Exception ex)
+                {
+                    Print("Could not download busybox: " + ex.Message + "\r\n");
+                }
+            }
+            if (File.Exists(bash))
+            {
+                Native.xb_setenv("CLAUDE_CODE_GIT_BASH_PATH", bash);
+                Native.xb_setenv("PATH", bin + ";" + (Environment.GetEnvironmentVariable("PATH") ?? ""));
+            }
             Native.xb_setenv("TERM", "xterm-256color");
             Native.xb_setenv("COLORTERM", "truecolor");
             // Makes links come through as OSC 8 hyperlinks, which the sign-in button picks up.

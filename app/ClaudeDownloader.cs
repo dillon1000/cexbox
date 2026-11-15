@@ -70,5 +70,35 @@ namespace Cexbox
                 return version;
             }
         }
+
+        const string BusyboxUrl = "https://frippery.org/files/busybox/";
+        const string BusyboxFile = "busybox64u.exe";
+
+        // Downloads busybox-w32 (a shell plus Unix tools in one program) and saves it as
+        // bash.exe, which Claude Code uses for its Bash tool. Checked against the
+        // checksum file published next to it.
+        public static async Task DownloadBusyboxAsync(string binDir)
+        {
+            using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) })
+            {
+                string sums = await http.GetStringAsync(BusyboxUrl + "SHA256SUM");
+                string expected = null;
+                foreach (string line in sums.Split('\n'))
+                {
+                    string[] parts = line.Trim().Split(new[] { ' ', '*' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length == 2 && parts[1] == BusyboxFile) expected = parts[0].ToLowerInvariant();
+                }
+                if (expected == null) throw new InvalidOperationException("busybox's checksum file doesn't list " + BusyboxFile + ".");
+
+                byte[] data = await http.GetByteArrayAsync(BusyboxUrl + BusyboxFile);
+                CryptographicHash hash = HashAlgorithmProvider.OpenAlgorithm(HashAlgorithmNames.Sha256).CreateHash();
+                hash.Append(CryptographicBuffer.CreateFromByteArray(data));
+                string actual = CryptographicBuffer.EncodeToHexString(hash.GetValueAndReset()).ToLowerInvariant();
+                if (actual != expected) throw new InvalidOperationException("The busybox download didn't match its checksum.");
+
+                Directory.CreateDirectory(binDir);
+                File.WriteAllBytes(Path.Combine(binDir, "bash.exe"), data);
+            }
+        }
     }
 }
