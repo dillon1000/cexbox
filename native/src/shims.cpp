@@ -402,6 +402,34 @@ bool path_delimiter(wchar_t c) {
            c == L'<' || c == L'>' || c == L'|' || c == L';' || c == L'&' || c == L'`' || c == L':';
 }
 
+// True if X:\name exists. The app's sandbox can't look at folders such as Q:\Users
+// (that reports "access denied", which still means it's there), so the first folder
+// of the home path counts too.
+bool top_level_exists(wchar_t drive, const std::wstring& name) {
+    std::wstring path = std::wstring(1, drive) + L":\\" + name;
+    if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return true;
+    if (GetLastError() == ERROR_ACCESS_DENIED) return true;
+    std::wstring home = env(L"USERPROFILE");
+    if (home.size() < 4 || towupper(home[0]) != drive || home[1] != L':') return false;
+    size_t end = home.find(L'\\', 3);
+    std::wstring first = home.substr(3, end == std::wstring::npos ? end : end - 3);
+    return _wcsicmp(first.c_str(), name.c_str()) == 0;
+}
+
+// Claude Code starts every command with "source <snapshot> 2>/dev/null || true && ".
+// The snapshot is written for real bash (it uses arrays), and busybox's shell exits
+// with a syntax error when it loads it, so that step is removed. The snapshot only
+// adds helper functions; PATH comes from the environment.
+std::wstring drop_snapshot_source(const std::wstring& cmd) {
+    static const std::wstring start = L"\"source ";
+    static const std::wstring finish = L" || true && ";
+    size_t s = cmd.find(start);
+    if (s == std::wstring::npos) return cmd;
+    size_t e = cmd.find(finish, s);
+    if (e == std::wstring::npos) return cmd;
+    return cmd.substr(0, s + 1) + cmd.substr(e + finish.size());
+}
+
 // Claude Code writes paths for Git Bash, as /c/Users/..., but the shell here is
 // busybox, which only knows C:/Users/.... This rewrites /x/name to X:/name wherever
 // it starts a word and X:\name really exists, so text such as sed's /a/b/ is left alone.
@@ -418,8 +446,7 @@ std::wstring translate_git_bash_paths(const std::wstring& cmd) {
             size_t end = i + 3;
             while (end < n && cmd[end] != L'/' && cmd[end] != L'\\' && !path_delimiter(cmd[end])) ++end;
             wchar_t drive = static_cast<wchar_t>(towupper(cmd[i + 1]));
-            std::wstring first = std::wstring(1, drive) + L":\\" + cmd.substr(i + 3, end - (i + 3));
-            if (end > i + 3 && GetFileAttributesW(first.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            if (end > i + 3 && top_level_exists(drive, cmd.substr(i + 3, end - (i + 3)))) {
                 out += drive;
                 out += L":/";
                 i += 2;
@@ -448,7 +475,7 @@ bool is_shell(LPCWSTR app, LPCWSTR cmd) {
 BOOL WINAPI s_CreateProcessW(LPCWSTR app, LPWSTR cmd, LPSECURITY_ATTRIBUTES psa, LPSECURITY_ATTRIBUTES tsa, BOOL inherit,
                              DWORD flags, LPVOID env, LPCWSTR cwd, LPSTARTUPINFOW si, LPPROCESS_INFORMATION pi) {
     std::wstring line = cmd ? cmd : L"";
-    if (cmd && is_shell(app, cmd)) line = translate_git_bash_paths(line);
+    if (cmd && is_shell(app, cmd)) line = translate_git_bash_paths(drop_snapshot_source(line));
     BOOL ok = CreateProcessW(app, cmd ? &line[0] : nullptr, psa, tsa, inherit, flags, env, cwd, si, pi);
     DWORD e = ok ? 0 : GetLastError();
     static volatile LONG calls = 0;
